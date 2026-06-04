@@ -10,11 +10,12 @@ Tune `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_IDLE_SECONDS`, and `
 
 The compose examples use `/readyz` healthchecks for the main service and Go workers. `/readyz` verifies the process can reach MariaDB, so rollout automation can distinguish a live process from a database-ready service.
 
-`shkeeperctl.sh` is the daily Docker management wrapper. It initializes `.env`, builds and starts only the enabled crypto workers, upgrades the checked-out source, stops or removes the stack, and keeps `SHKEEPER_CRYPTOS` plus matching `*_WALLET` switches in sync:
+`shkeeperctl.sh` is the daily Docker management wrapper. It initializes `.env`, builds and starts only the enabled crypto workers, upgrades the checked-out source, stops or removes the stack, and keeps `SHKEEPER_CRYPTOS` plus matching `*_WALLET` switches in sync. In an interactive terminal, first install asks for bind IP, host port, and a numbered multi-select crypto/network list. Non-interactive installs can use `SHKEEPER_HOST`, `SHKEEPER_PORT`, and `SHKEEPER_INIT_CRYPTOS` instead.
 
 ```bash
 cd /root/go-shkeeper
 bash deploy/shkeeperctl.sh install
+bash deploy/shkeeperctl.sh configure
 bash deploy/shkeeperctl.sh enable-crypto TRX USDT BNB-USDT
 bash deploy/shkeeperctl.sh show-cryptos
 bash deploy/shkeeperctl.sh upgrade

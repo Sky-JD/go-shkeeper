@@ -20,7 +20,7 @@ services:
     container_name: go-shkeeper
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5000:5000"
+      - "${SHKEEPER_HOST:-127.0.0.1}:${SHKEEPER_PORT:-5000}:5000"
     healthcheck: *main-healthcheck
     environment:
       SHKEEPER_LISTEN: ":5000"

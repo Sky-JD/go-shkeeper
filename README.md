@@ -50,11 +50,12 @@ For the hk-16-16 style stack, use [deploy/hk-16-16.modular.example.yml](deploy/h
 
 ## Management Script
 
-Use [deploy/shkeeperctl.sh](deploy/shkeeperctl.sh) as the daily Docker entrypoint for install, upgrade, uninstall, service control, and crypto enablement. It writes a local `.env` file, defaults new installs to `BTC` only, updates `SHKEEPER_CRYPTOS`, updates matching `*_WALLET` switches, and starts or stops the worker services that match the enabled crypto list.
+Use [deploy/shkeeperctl.sh](deploy/shkeeperctl.sh) as the daily Docker entrypoint for install, upgrade, uninstall, service control, and crypto enablement. In an interactive terminal, first install creates `.env` through a small wizard: choose bind IP, host port, and enabled cryptos by number, range, crypto name, network name, or `all`. Non-interactive installs still use environment defaults, so deployment automation can run without prompts.
 
 ```bash
 cd /root/go-shkeeper
 bash deploy/shkeeperctl.sh install
+bash deploy/shkeeperctl.sh configure
 bash deploy/shkeeperctl.sh enable-crypto TRX USDT BNB-USDT
 bash deploy/shkeeperctl.sh disable-crypto BTC-LIGHTNING
 bash deploy/shkeeperctl.sh upgrade
@@ -65,6 +66,12 @@ For hk-16-16 modular replacement, point the same script at the modular compose f
 
 ```bash
 SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml bash deploy/shkeeperctl.sh set-cryptos TRX,USDT,USDC,BNB,BNB-USDT,SOL,XMR,XRP
+```
+
+For unattended installs, pass the same values through environment variables:
+
+```bash
+SHKEEPER_HOST=0.0.0.0 SHKEEPER_PORT=8080 SHKEEPER_INIT_CRYPTOS=TRX,USDT,BNB-USDT bash deploy/shkeeperctl.sh install
 ```
 
 Admin and worker credential helpers accept password files only:

@@ -10,6 +10,7 @@ REPORT_DIR="${REPORT_DIR:-$ROOT_DIR/deploy-reports}"
 DOCKER_NETWORK="${SHKEEPER_DOCKER_NETWORK:-${PROJECT_NAME}_default}"
 INIT_CRYPTOS="${SHKEEPER_INIT_CRYPTOS:-${SHKEEPER_CRYPTOS:-BTC}}"
 DRY_RUN="${SHKEEPER_DRY_RUN:-0}"
+INTERACTIVE="${SHKEEPER_INTERACTIVE:-auto}"
 SERVICE_LIST=""
 
 export GO_SHKEEPER_IMAGE="$IMAGE"
@@ -28,6 +29,7 @@ usage() {
   cat <<'EOF'
 Usage:
   bash deploy/shkeeperctl.sh init
+  bash deploy/shkeeperctl.sh configure
   bash deploy/shkeeperctl.sh install
   bash deploy/shkeeperctl.sh upgrade
   bash deploy/shkeeperctl.sh uninstall
@@ -49,6 +51,9 @@ Environment:
   SHKEEPER_PROJECT_NAME     Default: go-shkeeper
   GO_SHKEEPER_IMAGE         Default: go-shkeeper:local
   SHKEEPER_INIT_CRYPTOS     Default: BTC
+  SHKEEPER_HOST             Default: 127.0.0.1
+  SHKEEPER_PORT             Default: 5000
+  SHKEEPER_INTERACTIVE      auto, 1, or 0. Default: auto
   SHKEEPER_DRY_RUN=1        Print Docker/Git actions without running them
   SHKEEPER_SKIP_GIT_PULL=1  Skip git pull during upgrade
   CONFIRM_UNINSTALL=GO_SHKEEPER is required for uninstall
@@ -128,45 +133,49 @@ wallet_env_for_crypto() {
   printf '%s_WALLET\n' "${crypto//-/_}"
 }
 
-all_known_cryptos() {
+crypto_catalog() {
   cat <<'EOF'
-BTC btc-worker
-BTC-LIGHTNING btc-lightning-worker
-LTC ltc-worker
-DOGE doge-worker
-FIRO firo-worker
-FIRO-SPARK firo-worker
-ETH eth-worker
-ETH-USDT eth-worker
-ETH-USDC eth-worker
-ETH-PYUSD eth-worker
-TRX tron-worker
-USDT tron-worker
-USDC tron-worker
-BNB bnb-worker
-BNB-USDT bnb-worker
-BNB-USDC bnb-worker
-MATIC polygon-worker
-POLYGON-USDT polygon-worker
-POLYGON-USDC polygon-worker
-AVAX avalanche-worker
-AVALANCHE-USDT avalanche-worker
-AVALANCHE-USDC avalanche-worker
-SOL solana-worker
-SOLANA-USDT solana-worker
-SOLANA-USDC solana-worker
-SOLANA-PYUSD solana-worker
-XRP xrp-worker
-ARBETH arbitrum-worker
-ARB-USDC arbitrum-worker
-ARB-PYUSD arbitrum-worker
-ARB-TOKEN arbitrum-worker
-OPETH optimism-worker
-OP-USDT optimism-worker
-OP-USDC optimism-worker
-OP-TOKEN optimism-worker
-XMR xmr-worker
+BTC BITCOIN btc-worker Bitcoin
+BTC-LIGHTNING BITCOIN btc-lightning-worker Lightning
+LTC LITECOIN ltc-worker Litecoin
+DOGE DOGECOIN doge-worker Dogecoin
+FIRO FIRO firo-worker Firo
+FIRO-SPARK FIRO firo-worker Firo-Spark
+ETH ETHEREUM eth-worker Ethereum
+ETH-USDT ETHEREUM eth-worker ERC20-USDT
+ETH-USDC ETHEREUM eth-worker ERC20-USDC
+ETH-PYUSD ETHEREUM eth-worker ERC20-PYUSD
+TRX TRON tron-worker Tron
+USDT TRON tron-worker TRC20-USDT
+USDC TRON tron-worker TRC20-USDC
+BNB BSC bnb-worker BNB
+BNB-USDT BSC bnb-worker BEP20-USDT
+BNB-USDC BSC bnb-worker BEP20-USDC
+MATIC POLYGON polygon-worker Polygon-MATIC
+POLYGON-USDT POLYGON polygon-worker Polygon-USDT
+POLYGON-USDC POLYGON polygon-worker Polygon-USDC
+AVAX AVALANCHE avalanche-worker Avalanche-AVAX
+AVALANCHE-USDT AVALANCHE avalanche-worker Avalanche-USDT
+AVALANCHE-USDC AVALANCHE avalanche-worker Avalanche-USDC
+SOL SOLANA solana-worker Solana
+SOLANA-USDT SOLANA solana-worker SPL-USDT
+SOLANA-USDC SOLANA solana-worker SPL-USDC
+SOLANA-PYUSD SOLANA solana-worker SPL-PYUSD
+XRP XRP xrp-worker XRP
+ARBETH ARBITRUM arbitrum-worker Arbitrum-ETH
+ARB-USDC ARBITRUM arbitrum-worker Arbitrum-USDC
+ARB-PYUSD ARBITRUM arbitrum-worker Arbitrum-PYUSD
+ARB-TOKEN ARBITRUM arbitrum-worker Arbitrum-token
+OPETH OPTIMISM optimism-worker Optimism-ETH
+OP-USDT OPTIMISM optimism-worker Optimism-USDT
+OP-USDC OPTIMISM optimism-worker Optimism-USDC
+OP-TOKEN OPTIMISM optimism-worker Optimism-token
+XMR XMR xmr-worker Monero
 EOF
+}
+
+all_known_cryptos() {
+  crypto_catalog | awk '{print $1, $3}'
 }
 
 validate_cryptos() {
@@ -174,6 +183,165 @@ validate_cryptos() {
   for crypto in $(split_crypto_lines "$@"); do
     worker_for_crypto "$crypto" >/dev/null || die "unsupported crypto: $crypto"
   done
+}
+
+is_interactive() {
+  case "$INTERACTIVE" in
+    1|true|yes|on) return 0 ;;
+    0|false|no|off) return 1 ;;
+  esac
+  [ -t 0 ] && [ -t 1 ]
+}
+
+valid_port() {
+  local value="$1"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  [ "$value" -ge 1 ] && [ "$value" -le 65535 ]
+}
+
+prompt_value() {
+  local label="$1"
+  local default="$2"
+  local value
+  while true; do
+    printf '%s [%s]: ' "$label" "$default" >&2
+    IFS= read -r value
+    value="$(trim "$value")"
+    if [ -z "$value" ]; then
+      value="$default"
+    fi
+    printf '%s' "$value"
+    return
+  done
+}
+
+prompt_port() {
+  local default="$1"
+  local value
+  while true; do
+    value="$(prompt_value "宿主机端口" "$default")"
+    if valid_port "$value"; then
+      printf '%s' "$value"
+      return
+    fi
+    printf '\n端口必须是 1-65535。\n' >&2
+  done
+}
+
+print_crypto_menu() {
+  local index=1
+  local crypto network worker label
+  printf '\n可用币种/网络：\n'
+  while read -r crypto network worker label; do
+    printf '  %2d) %-16s network=%-10s worker=%-22s %s\n' "$index" "$crypto" "$network" "$worker" "$label"
+    index=$((index + 1))
+  done < <(crypto_catalog)
+}
+
+crypto_by_index() {
+  local want="$1"
+  local index=1
+  local crypto network worker label
+  while read -r crypto network worker label; do
+    if [ "$index" -eq "$want" ]; then
+      printf '%s' "$crypto"
+      return 0
+    fi
+    index=$((index + 1))
+  done < <(crypto_catalog)
+  return 1
+}
+
+crypto_exists() {
+  local want
+  want="$(normalize_crypto "$1")"
+  crypto_catalog | awk '{print $1}' | grep -Fxq "$want"
+}
+
+cryptos_for_network() {
+  local want
+  want="$(normalize_crypto "$1")"
+  crypto_catalog | awk -v network="$want" '$2 == network {print $1}'
+}
+
+selection_to_cryptos() {
+  local selection="$1"
+  local default="$2"
+  local token start end i crypto network_items
+  local -a out=()
+  selection="$(trim "$selection")"
+  if [ -z "$selection" ]; then
+    normalize_crypto_list "$default"
+    return
+  fi
+  selection="${selection//;/,}"
+  selection="${selection// /,}"
+  IFS=',' read -r -a tokens <<<"$selection"
+  for token in "${tokens[@]}"; do
+    token="$(trim "$token")"
+    [ -n "$token" ] || continue
+    if [ "$(printf '%s' "$token" | tr '[:lower:]' '[:upper:]')" = "ALL" ]; then
+      while read -r crypto _; do
+        out+=("$crypto")
+      done < <(all_known_cryptos)
+      continue
+    fi
+    if [[ "$token" =~ ^[0-9]+-[0-9]+$ ]]; then
+      start="${token%-*}"
+      end="${token#*-}"
+      [ "$start" -le "$end" ] || die "invalid crypto range: $token"
+      for ((i = start; i <= end; i++)); do
+        crypto="$(crypto_by_index "$i" || true)"
+        [ -n "$crypto" ] || die "invalid crypto number: $i"
+        out+=("$crypto")
+      done
+      continue
+    fi
+    if [[ "$token" =~ ^[0-9]+$ ]]; then
+      crypto="$(crypto_by_index "$token" || true)"
+      [ -n "$crypto" ] || die "invalid crypto number: $token"
+      out+=("$crypto")
+      continue
+    fi
+    crypto="$(normalize_crypto "$token")"
+    if crypto_exists "$crypto"; then
+      out+=("$crypto")
+      continue
+    fi
+    mapfile -t network_items < <(cryptos_for_network "$crypto")
+    if [ "${#network_items[@]}" -gt 0 ]; then
+      out+=("${network_items[@]}")
+      continue
+    fi
+    die "unsupported crypto or network: $token"
+  done
+  normalize_crypto_list "${out[@]}"
+}
+
+configure_wizard() {
+  is_interactive || return 0
+  printf '\nSHKeeper first-run configuration\n'
+  printf '按回车使用默认值；币种可输入编号、范围、币种名、网络名或 all。\n'
+
+  local host port default_cryptos selection cryptos
+  host="$(prompt_value "绑定 IP" "${SHKEEPER_HOST:-$(env_get SHKEEPER_HOST || printf '127.0.0.1')}")"
+  printf '\n'
+  port="$(prompt_port "${SHKEEPER_PORT:-$(env_get SHKEEPER_PORT || printf '5000')}")"
+  printf '\n'
+  default_cryptos="$(env_get SHKEEPER_CRYPTOS || true)"
+  if [ -z "$default_cryptos" ]; then
+    default_cryptos="$(normalize_crypto_list "$INIT_CRYPTOS")"
+  fi
+  print_crypto_menu
+  printf '\n选择启用的币种/网络 [%s]: ' "$default_cryptos"
+  IFS= read -r selection
+  cryptos="$(selection_to_cryptos "$selection" "$default_cryptos")"
+
+  env_set SHKEEPER_HOST "$host"
+  env_set SHKEEPER_PORT "$port"
+  write_cryptos "$cryptos"
+  set_wallet_envs enabled "$cryptos"
+  log "configured host=$host port=$port cryptos=$cryptos"
 }
 
 env_get() {
@@ -337,6 +505,13 @@ current_cryptos() {
   default_compose_cryptos
 }
 
+needs_initial_config() {
+  [ -z "$(env_get SHKEEPER_HOST || true)" ] && return 0
+  [ -z "$(env_get SHKEEPER_PORT || true)" ] && return 0
+  [ -z "$(env_get SHKEEPER_CRYPTOS || true)" ] && return 0
+  return 1
+}
+
 write_cryptos() {
   local cryptos="$1"
   [ -n "$cryptos" ] || die "crypto list cannot be empty; use stop or uninstall instead"
@@ -382,11 +557,17 @@ list_to_args() {
 }
 
 init_env() {
+  local created_env=0
   mkdir -p "$(dirname "$ENV_FILE")"
   if [ ! -f "$ENV_FILE" ]; then
     umask 077
     : >"$ENV_FILE"
+    created_env=1
     log "created $ENV_FILE"
+  fi
+
+  if { [ "$created_env" = "1" ] || [ "${SHKEEPER_CONFIGURE:-0}" = "1" ] || needs_initial_config; } && is_interactive; then
+    configure_wizard
   fi
 
   local root_password mariadb_password cryptos
@@ -409,6 +590,8 @@ init_env() {
   env_set_default SHKEEPER_DB_MAX_IDLE_CONNS "16"
   env_set_default WORKER_DB_MAX_OPEN_CONNS "16"
   env_set_default WORKER_DB_MAX_IDLE_CONNS "8"
+  env_set_default SHKEEPER_HOST "${SHKEEPER_HOST:-127.0.0.1}"
+  env_set_default SHKEEPER_PORT "${SHKEEPER_PORT:-5000}"
   env_set_default MARIADB_DATABASE_URL "mariadb://root:$root_password@mariadb:3306/shkeeper"
 
   env_set_default BTC_USERNAME "worker"
@@ -452,6 +635,17 @@ init_env() {
   fi
   set_wallet_envs enabled "$cryptos"
   log "enabled cryptos: $cryptos"
+}
+
+configure_stack() {
+  mkdir -p "$(dirname "$ENV_FILE")"
+  if [ ! -f "$ENV_FILE" ]; then
+    umask 077
+    : >"$ENV_FILE"
+    log "created $ENV_FILE"
+  fi
+  configure_wizard
+  init_env
 }
 
 compose_build_selected() {
@@ -661,6 +855,7 @@ fi
 case "$cmd" in
   help|-h|--help) usage ;;
   init) init_env ;;
+  configure) configure_stack ;;
   install) install_stack ;;
   upgrade) upgrade_stack ;;
   uninstall) uninstall_stack ;;

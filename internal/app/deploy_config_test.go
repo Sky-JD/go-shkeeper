@@ -533,6 +533,13 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 	text := string(body)
 	required := []string{
 		"#!/usr/bin/env bash",
+		"configure_wizard",
+		"configure_stack",
+		"SHKEEPER_INTERACTIVE",
+		"SHKEEPER_HOST",
+		"SHKEEPER_PORT",
+		"selection_to_cryptos",
+		"prompt_port",
 		"install_stack",
 		"upgrade_stack",
 		"uninstall_stack",
@@ -577,12 +584,35 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 	readme := string(readmeBody)
 	for _, item := range []string{
 		"deploy/shkeeperctl.sh",
+		"bash deploy/shkeeperctl.sh configure",
+		"SHKEEPER_HOST=0.0.0.0 SHKEEPER_PORT=8080",
 		"enable-crypto TRX USDT BNB-USDT",
 		"CONFIRM_UNINSTALL=GO_SHKEEPER",
 		"SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml",
 	} {
 		if !strings.Contains(readme, item) {
 			t.Fatalf("README is missing shkeeperctl marker %q", item)
+		}
+	}
+}
+
+func TestComposeExamplesAllowCustomHostPort(t *testing.T) {
+	files := []string{
+		"../../docker-compose.example.yml",
+		"../../deploy/hk-16-16.modular.example.yml",
+	}
+	for _, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read compose file %s: %v", file, err)
+		}
+		text := string(body)
+		want := `"${SHKEEPER_HOST:-127.0.0.1}:${SHKEEPER_PORT:-5000}:5000"`
+		if !strings.Contains(text, want) {
+			t.Fatalf("%s must expose the main service through SHKEEPER_HOST and SHKEEPER_PORT", file)
+		}
+		if strings.Contains(text, `"127.0.0.1:5000:5000"`) {
+			t.Fatalf("%s must not hard-code the host port mapping", file)
 		}
 	}
 }
