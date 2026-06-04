@@ -48,6 +48,34 @@ docker run --rm -p 5000:5000 -e MARIADB_DATABASE_URL="mariadb://user:${DB_PASSWO
 
 For the hk-16-16 style stack, use [deploy/hk-16-16.modular.example.yml](deploy/hk-16-16.modular.example.yml). It replaces the current main container plus BTC Lightning/TRON/BNB/Solana/XMR/XRP sidecars with Go binaries and leaves secrets as environment placeholders.
 
+## Management Script
+
+Use [deploy/shkeeperctl.sh](deploy/shkeeperctl.sh) as the daily Docker entrypoint for install, upgrade, uninstall, service control, and crypto enablement. It writes a local `.env` file, defaults new installs to `BTC` only, updates `SHKEEPER_CRYPTOS`, updates matching `*_WALLET` switches, and starts or stops the worker services that match the enabled crypto list.
+
+```bash
+cd /root/go-shkeeper
+bash deploy/shkeeperctl.sh install
+bash deploy/shkeeperctl.sh enable-crypto TRX USDT BNB-USDT
+bash deploy/shkeeperctl.sh disable-crypto BTC-LIGHTNING
+bash deploy/shkeeperctl.sh upgrade
+CONFIRM_UNINSTALL=GO_SHKEEPER bash deploy/shkeeperctl.sh uninstall
+```
+
+For hk-16-16 modular replacement, point the same script at the modular compose file:
+
+```bash
+SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml bash deploy/shkeeperctl.sh set-cryptos TRX,USDT,USDC,BNB,BNB-USDT,SOL,XMR,XRP
+```
+
+Admin and worker credential helpers accept password files only:
+
+```bash
+bash deploy/shkeeperctl.sh admin-password admin /secure/admin_password
+bash deploy/shkeeperctl.sh worker-serverkey BNB,BNB-USDT worker /secure/worker_password
+```
+
+Set `SHKEEPER_DRY_RUN=1` to print Docker/Git actions while still validating and updating the local `.env` crypto configuration.
+
 ## Deployment Check
 
 The image includes `/app/runtime-audit`, a Go-native runtime dependency verifier:

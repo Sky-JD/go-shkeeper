@@ -10,6 +10,18 @@ Tune `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_IDLE_SECONDS`, and `
 
 The compose examples use `/readyz` healthchecks for the main service and Go workers. `/readyz` verifies the process can reach MariaDB, so rollout automation can distinguish a live process from a database-ready service.
 
+`shkeeperctl.sh` is the daily Docker management wrapper. It initializes `.env`, builds and starts only the enabled crypto workers, upgrades the checked-out source, stops or removes the stack, and keeps `SHKEEPER_CRYPTOS` plus matching `*_WALLET` switches in sync:
+
+```bash
+cd /root/go-shkeeper
+bash deploy/shkeeperctl.sh install
+bash deploy/shkeeperctl.sh enable-crypto TRX USDT BNB-USDT
+bash deploy/shkeeperctl.sh show-cryptos
+bash deploy/shkeeperctl.sh upgrade
+```
+
+For the hk modular compose file, pass `SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml`. `SHKEEPER_DRY_RUN=1` prints Docker/Git actions while still validating and updating the local `.env` crypto configuration. `uninstall` is guarded with `CONFIRM_UNINSTALL=GO_SHKEEPER`, and data volume removal additionally requires `PURGE_DATA=1 CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA`.
+
 After starting a candidate stack, run the Go-native verifier from the image. It checks main `/healthz`, main `/readyz`, optional complete order lookup, optional worker `/healthz` and `/readyz`, and optional authenticated worker/admin probes:
 
 ```bash

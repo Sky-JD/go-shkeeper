@@ -525,6 +525,68 @@ func TestContribPasswordHelperUsesGoAdminAccountAndMariaDB(t *testing.T) {
 	}
 }
 
+func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/shkeeperctl.sh")
+	if err != nil {
+		t.Fatalf("read shkeeper control script: %v", err)
+	}
+	text := string(body)
+	required := []string{
+		"#!/usr/bin/env bash",
+		"install_stack",
+		"upgrade_stack",
+		"uninstall_stack",
+		"enable-crypto",
+		"disable-crypto",
+		"set-cryptos",
+		"SHKEEPER_CRYPTOS",
+		"set_wallet_envs",
+		"worker_for_crypto",
+		"admin-password",
+		"worker-serverkey",
+		"MARIADB_DATABASE_URL",
+		"SHKEEPER_DRY_RUN",
+		"CONFIRM_UNINSTALL=GO_SHKEEPER",
+		"CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA",
+		"hk-docker-debug.sh",
+		"hk-16-16-final-readiness.sh",
+	}
+	for _, item := range required {
+		if !strings.Contains(text, item) {
+			t.Fatalf("shkeeper control script is missing %q", item)
+		}
+	}
+	forbidden := []string{
+		"python",
+		"sqlite://",
+		"sqlite3",
+		"DROP DATABASE",
+		`-e DATABASE_URL=`,
+	}
+	lowered := strings.ToLower(text)
+	for _, item := range forbidden {
+		if strings.Contains(lowered, strings.ToLower(item)) {
+			t.Fatalf("shkeeper control script must not contain %q", item)
+		}
+	}
+
+	readmeBody, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	readme := string(readmeBody)
+	for _, item := range []string{
+		"deploy/shkeeperctl.sh",
+		"enable-crypto TRX USDT BNB-USDT",
+		"CONFIRM_UNINSTALL=GO_SHKEEPER",
+		"SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml",
+	} {
+		if !strings.Contains(readme, item) {
+			t.Fatalf("README is missing shkeeperctl marker %q", item)
+		}
+	}
+}
+
 func TestHKModularComposeAndDeployPlanCoverEveryDefaultCryptoWorker(t *testing.T) {
 	body, err := os.ReadFile("../../deploy/hk-16-16.modular.example.yml")
 	if err != nil {
