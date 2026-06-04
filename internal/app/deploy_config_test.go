@@ -544,6 +544,8 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 		"panel_set_admin_password",
 		"panel_set_api_key",
 		"panel_set_worker_serverkey",
+		"docker compose run --rm --no-deps",
+		"compose run --rm --no-deps",
 		"set-api-key",
 		"set-secret-key",
 		"set-backend-key",
@@ -585,6 +587,7 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 		"sqlite3",
 		"DROP DATABASE",
 		`-e DATABASE_URL=`,
+		"read -r -s",
 	}
 	lowered := strings.ToLower(text)
 	for _, item := range forbidden {

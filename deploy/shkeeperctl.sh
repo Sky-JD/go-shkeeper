@@ -430,11 +430,9 @@ prompt_secret_to_file() {
   mkdir -p "$(dirname "$file")"
   while true; do
     printf '%s: ' "$label" >&2
-    IFS= read -r -s first
-    printf '\n' >&2
+    IFS= read -r first
     printf '再次输入%s: ' "$label" >&2
-    IFS= read -r -s second
-    printf '\n' >&2
+    IFS= read -r second
     if [ -z "$first" ]; then
       printf '不能为空。\n' >&2
       continue
@@ -492,7 +490,7 @@ done
 compose() {
   if [ "$DRY_RUN" = "1" ]; then
     case "${1:-}" in
-      up|down|stop|restart|build|pull|rm)
+      up|down|stop|restart|build|pull|rm|run)
         printf '[shkeeperctl] dry-run: docker compose --env-file %q -p %q ' "$ENV_FILE" "$PROJECT_NAME"
         printf '%q ' "${compose_file_args[@]}" "$@"
         printf '\n'
@@ -1044,20 +1042,22 @@ admin_password() {
   require_env_file
   local username="$1"
   local password_file="$2"
+  local service
   [ -f "$password_file" ] || die "password file does not exist: $password_file"
   mkdir -p "$REPORT_DIR"
+  service="$(main_service)"
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[shkeeperctl] dry-run: docker run --rm --network %q -e MARIADB_DATABASE_URL=*** -e ADMIN_USERNAME=%q -e ADMIN_PASSWORD_FILE=/run/secrets/admin_password -v %q:/run/secrets/admin_password:ro -v %q:/deploy-reports %q /app/admin-account\n' "$DOCKER_NETWORK" "$username" "$password_file" "$REPORT_DIR" "$IMAGE"
+    printf '[shkeeperctl] dry-run: docker compose run --rm --no-deps -e MARIADB_DATABASE_URL=*** -e ADMIN_USERNAME=%q -e ADMIN_PASSWORD_FILE=/run/secrets/admin_password -v %q:/run/secrets/admin_password:ro -v %q:/deploy-reports %q /app/admin-account\n' "$username" "$password_file" "$REPORT_DIR" "$service"
     return 0
   fi
-  docker run --rm --network "$DOCKER_NETWORK" \
+  compose run --rm --no-deps \
     -e MARIADB_DATABASE_URL="$(mariadb_url)" \
     -e ADMIN_USERNAME="$username" \
     -e ADMIN_PASSWORD_FILE=/run/secrets/admin_password \
     -e ADMIN_ACCOUNT_REPORT_FILE=/deploy-reports/go-shkeeper-admin-account.json \
     -v "$password_file:/run/secrets/admin_password:ro" \
     -v "$REPORT_DIR:/deploy-reports" \
-    "$IMAGE" /app/admin-account
+    "$service" /app/admin-account
 }
 
 worker_serverkey() {
@@ -1066,14 +1066,16 @@ worker_serverkey() {
   local cryptos="$1"
   local username="$2"
   local password_file="$3"
+  local service
   validate_cryptos "$cryptos"
   [ -f "$password_file" ] || die "password file does not exist: $password_file"
   mkdir -p "$REPORT_DIR"
+  service="$(main_service)"
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[shkeeperctl] dry-run: docker run --rm --network %q -e MARIADB_DATABASE_URL=*** -e WORKER_SERVERKEY_CRYPTOS=%q -e WORKER_USERNAME=%q -e WORKER_PASSWORD_FILE=/run/secrets/worker_password -v %q:/run/secrets/worker_password:ro -v %q:/deploy-reports %q /app/worker-serverkey\n' "$DOCKER_NETWORK" "$(normalize_crypto_list "$cryptos")" "$username" "$password_file" "$REPORT_DIR" "$IMAGE"
+    printf '[shkeeperctl] dry-run: docker compose run --rm --no-deps -e MARIADB_DATABASE_URL=*** -e WORKER_SERVERKEY_CRYPTOS=%q -e WORKER_USERNAME=%q -e WORKER_PASSWORD_FILE=/run/secrets/worker_password -v %q:/run/secrets/worker_password:ro -v %q:/deploy-reports %q /app/worker-serverkey\n' "$(normalize_crypto_list "$cryptos")" "$username" "$password_file" "$REPORT_DIR" "$service"
     return 0
   fi
-  docker run --rm --network "$DOCKER_NETWORK" \
+  compose run --rm --no-deps \
     -e MARIADB_DATABASE_URL="$(mariadb_url)" \
     -e WORKER_SERVERKEY_CRYPTOS="$(normalize_crypto_list "$cryptos")" \
     -e WORKER_USERNAME="$username" \
@@ -1081,7 +1083,7 @@ worker_serverkey() {
     -e WORKER_SERVERKEY_REPORT_FILE=/deploy-reports/go-shkeeper-worker-serverkey.json \
     -v "$password_file:/run/secrets/worker_password:ro" \
     -v "$REPORT_DIR:/deploy-reports" \
-    "$IMAGE" /app/worker-serverkey
+    "$service" /app/worker-serverkey
 }
 
 panel_pause() {

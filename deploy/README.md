@@ -22,7 +22,7 @@ bash deploy/shkeeperctl.sh show-cryptos
 bash deploy/shkeeperctl.sh upgrade
 ```
 
-`install` installs `/usr/local/bin/shkeeperctl` when permissions allow it. Running `shkeeperctl` without arguments opens a management panel for install, update, uninstall, status, logs, crypto selection, admin password, wallet API key, backend key, and worker serverkey actions. Direct commands remain available, for example `shkeeperctl set-api-key /secure/api_key`, `shkeeperctl admin-password admin /secure/admin_password`, and `shkeeperctl worker-serverkey BNB,BNB-USDT worker /secure/worker_password`.
+`install` installs `/usr/local/bin/shkeeperctl` when permissions allow it. Running `shkeeperctl` without arguments opens a management panel for install, update, uninstall, status, logs, crypto selection, admin password, wallet API key, backend key, and worker serverkey actions. Password and key input in the panel is displayed plainly so operators can confirm what they typed. Direct commands remain available, for example `shkeeperctl set-api-key /secure/api_key`, `shkeeperctl admin-password admin /secure/admin_password`, and `shkeeperctl worker-serverkey BNB,BNB-USDT worker /secure/worker_password`.
 
 For the hk modular compose file, pass `SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml`. `SHKEEPER_DRY_RUN=1` prints Docker/Git actions while still validating and updating the local `.env` crypto configuration. `uninstall` is guarded with `CONFIRM_UNINSTALL=GO_SHKEEPER`, and data volume removal additionally requires `PURGE_DATA=1 CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA`.
 

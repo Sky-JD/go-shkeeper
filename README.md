@@ -112,7 +112,7 @@ shkeeperctl set-secret-key /root/go-shkeeper/secrets/secret_key
 shkeeperctl set-backend-key /root/go-shkeeper/secrets/backend_key
 ```
 
-本地输入式设置请进入面板，选择对应菜单。面板会把输入内容写入 `secrets/`，文件权限为 `0600`。
+本地输入式设置请进入面板，选择对应菜单。面板输入密码和密钥时会明文显示，便于确认输入内容；写入后会保存到 `secrets/`，文件权限为 `0600`。
 
 ## 管理员账号
 
