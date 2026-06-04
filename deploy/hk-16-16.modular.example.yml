@@ -1,0 +1,632 @@
+x-main-healthcheck: &main-healthcheck
+  test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5000/readyz | grep -q '\"status\":\"ready\"'"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+x-worker-healthcheck: &worker-healthcheck
+  test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6000/readyz | grep -q '\"status\":\"ready\"'"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+services:
+  shkeeper:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-shkeeper
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    healthcheck: *main-healthcheck
+    environment:
+      SHKEEPER_LISTEN: ":5000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${SHKEEPER_DB_MAX_OPEN_CONNS:-48}"
+      DB_MAX_IDLE_CONNS: "${SHKEEPER_DB_MAX_IDLE_CONNS:-16}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      SECRET_KEY: "${SECRET_KEY}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      SHKEEPER_BTC_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      SHKEEPER_CALLBACK_USER_AGENT: "SHKeeper-Go-Callback/1.0"
+      SHKEEPER_CRYPTOS: "${SHKEEPER_CRYPTOS:-BTC,BTC-LIGHTNING,LTC,DOGE,FIRO,FIRO-SPARK,ETH,ETH-USDT,ETH-USDC,ETH-PYUSD,TRX,USDT,USDC,BNB,BNB-USDT,BNB-USDC,MATIC,POLYGON-USDT,POLYGON-USDC,AVAX,AVALANCHE-USDT,AVALANCHE-USDC,SOL,SOLANA-USDT,SOLANA-USDC,SOLANA-PYUSD,XRP,ARBETH,ARB-USDC,ARB-PYUSD,ARB-TOKEN,OPETH,OP-USDT,OP-USDC,OP-TOKEN,XMR}"
+      BTC_WALLET: "${BTC_WALLET:-disabled}"
+      BTC_LIGHTNING_WALLET: "${BTC_LIGHTNING_WALLET:-disabled}"
+      LTC_WALLET: "${LTC_WALLET:-disabled}"
+      DOGE_WALLET: "${DOGE_WALLET:-disabled}"
+      FIRO_WALLET: "${FIRO_WALLET:-disabled}"
+      FIRO_SPARK_WALLET: "${FIRO_SPARK_WALLET:-disabled}"
+      ETH_WALLET: "${ETH_WALLET:-disabled}"
+      ETH_USDT_WALLET: "${ETH_USDT_WALLET:-disabled}"
+      ETH_USDC_WALLET: "${ETH_USDC_WALLET:-disabled}"
+      ETH_PYUSD_WALLET: "${ETH_PYUSD_WALLET:-disabled}"
+      TRX_WALLET: "enabled"
+      USDT_WALLET: "enabled"
+      USDC_WALLET: "enabled"
+      BNB_WALLET: "enabled"
+      BNB_USDT_WALLET: "enabled"
+      BNB_USDC_WALLET: "${BNB_USDC_WALLET:-disabled}"
+      MATIC_WALLET: "${MATIC_WALLET:-disabled}"
+      POLYGON_USDT_WALLET: "${POLYGON_USDT_WALLET:-disabled}"
+      POLYGON_USDC_WALLET: "${POLYGON_USDC_WALLET:-disabled}"
+      AVAX_WALLET: "${AVAX_WALLET:-disabled}"
+      AVALANCHE_USDT_WALLET: "${AVALANCHE_USDT_WALLET:-disabled}"
+      AVALANCHE_USDC_WALLET: "${AVALANCHE_USDC_WALLET:-disabled}"
+      SOL_WALLET: "enabled"
+      SOLANA_USDT_WALLET: "enabled"
+      SOLANA_USDC_WALLET: "enabled"
+      SOLANA_PYUSD_WALLET: "enabled"
+      ARBETH_WALLET: "${ARBETH_WALLET:-disabled}"
+      ARB_USDC_WALLET: "${ARB_USDC_WALLET:-disabled}"
+      ARB_PYUSD_WALLET: "${ARB_PYUSD_WALLET:-disabled}"
+      ARB_TOKEN_WALLET: "${ARB_TOKEN_WALLET:-disabled}"
+      OPETH_WALLET: "${OPETH_WALLET:-disabled}"
+      OP_USDT_WALLET: "${OP_USDT_WALLET:-disabled}"
+      OP_USDC_WALLET: "${OP_USDC_WALLET:-disabled}"
+      OP_TOKEN_WALLET: "${OP_TOKEN_WALLET:-disabled}"
+      XMR_WALLET: "enabled"
+      XRP_WALLET: "enabled"
+      BTC_API_SERVER_HOST: "btc-worker"
+      BTC_SERVER_PORT: "6000"
+      LTC_API_SERVER_HOST: "ltc-worker"
+      LTC_SERVER_PORT: "6000"
+      DOGE_API_SERVER_HOST: "doge-worker"
+      DOGE_SERVER_PORT: "6000"
+      FIRO_API_SERVER_HOST: "firo-worker"
+      FIRO_SERVER_PORT: "6000"
+      BTC_LIGHTNING_API_SERVER_HOST: "btc-lightning-worker"
+      BTC_LIGHTNING_SERVER_PORT: "6000"
+      ETHEREUM_API_SERVER_HOST: "eth-worker"
+      ETHEREUM_SERVER_PORT: "6000"
+      TRON_API_SERVER_HOST: "tron-worker"
+      TRON_API_SERVER_PORT: "6000"
+      BNB_API_SERVER_HOST: "bnb-worker"
+      BNB_SERVER_PORT: "6000"
+      POLYGON_API_SERVER_HOST: "polygon-worker"
+      POLYGON_SERVER_PORT: "6000"
+      AVALANCHE_API_SERVER_HOST: "avalanche-worker"
+      AVALANCHE_SERVER_PORT: "6000"
+      ARBITRUM_API_SERVER_HOST: "arbitrum-worker"
+      ARBITRUM_SERVER_PORT: "6000"
+      OPTIMISM_API_SERVER_HOST: "optimism-worker"
+      OPTIMISM_SERVER_PORT: "6000"
+      MONERO_API_SERVER_HOST: "xmr-worker"
+      MONERO_SERVER_PORT: "6000"
+      XRP_API_SERVER_HOST: "xrp-worker"
+      XRP_SERVER_PORT: "6000"
+      SOLANA_API_SERVER_HOST: "solana-worker"
+      SOLANA_SERVER_PORT: "6000"
+      TRX_USERNAME: "${TRON_USERNAME}"
+      TRX_PASSWORD: "${TRON_PASSWORD}"
+      USDT_USERNAME: "${TRON_USERNAME}"
+      USDT_PASSWORD: "${TRON_PASSWORD}"
+      USDC_USERNAME: "${TRON_USERNAME}"
+      USDC_PASSWORD: "${TRON_PASSWORD}"
+      BTC_USERNAME: "${BTC_USERNAME}"
+      BTC_PASSWORD: "${BTC_PASSWORD}"
+      BTC_LIGHTNING_USERNAME: "${BTC_LIGHTNING_USERNAME}"
+      BTC_LIGHTNING_PASSWORD: "${BTC_LIGHTNING_PASSWORD}"
+      ETH_USERNAME: "${ETH_USERNAME}"
+      ETH_PASSWORD: "${ETH_PASSWORD}"
+      BNB_USERNAME: "${BNB_USERNAME}"
+      BNB_PASSWORD: "${BNB_PASSWORD}"
+      POLYGON_USERNAME: "${POLYGON_USERNAME}"
+      POLYGON_PASSWORD: "${POLYGON_PASSWORD}"
+      AVALANCHE_USERNAME: "${AVALANCHE_USERNAME}"
+      AVALANCHE_PASSWORD: "${AVALANCHE_PASSWORD}"
+      ARB_USERNAME: "${ARB_USERNAME}"
+      ARB_PASSWORD: "${ARB_PASSWORD}"
+      OP_USERNAME: "${OP_USERNAME}"
+      OP_PASSWORD: "${OP_PASSWORD}"
+      SOLANA_USERNAME: "${SOLANA_USERNAME}"
+      SOLANA_PASSWORD: "${SOLANA_PASSWORD}"
+      MONERO_USERNAME: "${MONERO_USERNAME}"
+      MONERO_PASSWORD: "${MONERO_PASSWORD}"
+      XRP_USERNAME: "${XRP_USERNAME}"
+      XRP_PASSWORD: "${XRP_PASSWORD}"
+      LTC_USERNAME: "${LTC_USERNAME}"
+      LTC_PASSWORD: "${LTC_PASSWORD}"
+      DOGE_USERNAME: "${DOGE_USERNAME}"
+      DOGE_PASSWORD: "${DOGE_PASSWORD}"
+      FIRO_USERNAME: "${FIRO_USERNAME}"
+      FIRO_PASSWORD: "${FIRO_PASSWORD}"
+      BALANCE_QUERY_WORKERS: "8"
+    depends_on:
+      - mariadb
+      - redis
+      - btc-worker
+      - ltc-worker
+      - doge-worker
+      - firo-worker
+      - btc-lightning-worker
+      - eth-worker
+      - tron-worker
+      - bnb-worker
+      - polygon-worker
+      - avalanche-worker
+      - arbitrum-worker
+      - optimism-worker
+      - solana-worker
+      - xmr-worker
+      - xrp-worker
+
+  btc-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-btc-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "BTC"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${BTC_RPC_URL:-http://bitcoind:8332}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      BTC_USERNAME: "${BTC_USERNAME}"
+      BTC_PASSWORD: "${BTC_PASSWORD}"
+      BTC_RPC_USERNAME: "${BTC_RPC_USERNAME}"
+      BTC_RPC_PASSWORD: "${BTC_RPC_PASSWORD}"
+      BTC_ESTIMATE_TARGET_BLOCKS: "${BTC_ESTIMATE_TARGET_BLOCKS:-6}"
+    depends_on:
+      - mariadb
+
+  ltc-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-ltc-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "LTC"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${LTC_RPC_URL:-http://litecoind:9332}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      LTC_USERNAME: "${LTC_USERNAME}"
+      LTC_PASSWORD: "${LTC_PASSWORD}"
+      LTC_RPC_USERNAME: "${LTC_RPC_USERNAME}"
+      LTC_RPC_PASSWORD: "${LTC_RPC_PASSWORD}"
+      LTC_ESTIMATE_TARGET_BLOCKS: "${LTC_ESTIMATE_TARGET_BLOCKS:-6}"
+    depends_on:
+      - mariadb
+
+  doge-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-doge-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "DOGE"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${DOGE_RPC_URL:-http://dogecoind:22555}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      DOGE_USERNAME: "${DOGE_USERNAME}"
+      DOGE_PASSWORD: "${DOGE_PASSWORD}"
+      DOGE_RPC_USERNAME: "${DOGE_RPC_USERNAME}"
+      DOGE_RPC_PASSWORD: "${DOGE_RPC_PASSWORD}"
+      DOGE_ESTIMATE_TARGET_BLOCKS: "${DOGE_ESTIMATE_TARGET_BLOCKS:-6}"
+    depends_on:
+      - mariadb
+
+  firo-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-firo-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "FIRO"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${FIRO_RPC_URL:-http://firod:8332}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      FIRO_USERNAME: "${FIRO_USERNAME}"
+      FIRO_PASSWORD: "${FIRO_PASSWORD}"
+      FIRO_RPC_USERNAME: "${FIRO_RPC_USERNAME}"
+      FIRO_RPC_PASSWORD: "${FIRO_RPC_PASSWORD}"
+      FIRO_ESTIMATE_TARGET_BLOCKS: "${FIRO_ESTIMATE_TARGET_BLOCKS:-6}"
+    depends_on:
+      - mariadb
+
+  btc-lightning-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-btc-lightning-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "BTC-LIGHTNING"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      LND_REST_URL: "${LND_REST_URL:-https://lnd:8080}"
+      LND_MACAROON_HEX: "${LND_MACAROON_HEX:-}"
+      LND_MACAROON_FILE: "${LND_MACAROON_FILE:-}"
+      LND_SHARED_DIR: "${LND_SHARED_DIR:-/lightning_shared}"
+      LND_NETWORK: "${LND_NETWORK:-mainnet}"
+      LND_TLS_SKIP_VERIFY: "${LND_TLS_SKIP_VERIFY:-false}"
+      BTC_LIGHTNING_USERNAME: "${BTC_LIGHTNING_USERNAME}"
+      BTC_LIGHTNING_PASSWORD: "${BTC_LIGHTNING_PASSWORD}"
+      LIGHTNING_INVOICE_TTL: "${LIGHTNING_INVOICE_TTL:-604800}"
+      LIGHTNING_LNURL: "${LIGHTNING_LNURL:-}"
+      LNBITS_URL: "${LNBITS_URL:-}"
+      LNBITS_ADMIN_KEY: "${LNBITS_ADMIN_KEY:-}"
+    depends_on:
+      - mariadb
+      - redis
+
+  tron-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-tron-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "TRON"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${TRON_FULLNODE_URL:-https://api.trongrid.io}"
+      TRON_FULLNODE_URLS: "${TRON_FULLNODE_URLS:-}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${TRON_ACCOUNT_PASSWORD}"
+      TRON_FEE_DEPOSIT_ADDRESS: "${TRON_FEE_DEPOSIT_ADDRESS:-}"
+      TRON_FEE_DEPOSIT_PRIVATE_KEY_HEX: "${TRON_FEE_DEPOSIT_PRIVATE_KEY_HEX:-}"
+      TRON_STAKING_ADDRESS: "${TRON_STAKING_ADDRESS:-}"
+      TRON_STAKING_PRIVATE_KEY_HEX: "${TRON_STAKING_PRIVATE_KEY_HEX:-}"
+      TRON_USERNAME: "${TRON_USERNAME}"
+      TRON_PASSWORD: "${TRON_PASSWORD}"
+      TRX_USERNAME: "${TRON_USERNAME}"
+      TRX_PASSWORD: "${TRON_PASSWORD}"
+      USDT_USERNAME: "${TRON_USERNAME}"
+      USDT_PASSWORD: "${TRON_PASSWORD}"
+      USDC_USERNAME: "${TRON_USERNAME}"
+      USDC_PASSWORD: "${TRON_PASSWORD}"
+      TRON_USDT_CONTRACT: "${TRON_USDT_CONTRACT:-TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj}"
+      TRON_USDC_CONTRACT: "${TRON_USDC_CONTRACT:-TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8}"
+      TRON_TOKEN_FEE_LIMIT_SUN: "${TRON_TOKEN_FEE_LIMIT_SUN:-100000000}"
+    depends_on:
+      - mariadb
+      - redis
+
+  bnb-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-bnb-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "BNB"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${BNB_FULLNODE_URL:-https://bsc-rpc.publicnode.com}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${BNB_ACCOUNT_PASSWORD}"
+      EVM_CHAIN_ID: "${BNB_CHAIN_ID:-56}"
+      BNB_USERNAME: "${BNB_USERNAME}"
+      BNB_PASSWORD: "${BNB_PASSWORD}"
+      BNB_USDT_USERNAME: "${BNB_USERNAME}"
+      BNB_USDT_PASSWORD: "${BNB_PASSWORD}"
+      BNB_USDC_USERNAME: "${BNB_USERNAME}"
+      BNB_USDC_PASSWORD: "${BNB_PASSWORD}"
+      BNB_USDT_CONTRACT: "${BNB_USDT_CONTRACT:-0x55d398326f99059fF775485246999027B3197955}"
+      BNB_USDT_DECIMALS: "${BNB_USDT_DECIMALS:-18}"
+      BNB_USDC_CONTRACT: "${BNB_USDC_CONTRACT:-0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d}"
+      BNB_USDC_DECIMALS: "${BNB_USDC_DECIMALS:-18}"
+    depends_on:
+      - mariadb
+      - redis
+
+  eth-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-eth-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "ETH"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${ETH_FULLNODE_URL:-https://ethereum-rpc.publicnode.com}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${ETH_ACCOUNT_PASSWORD}"
+      EVM_CHAIN_ID: "${ETH_CHAIN_ID:-1}"
+      ETH_USERNAME: "${ETH_USERNAME}"
+      ETH_PASSWORD: "${ETH_PASSWORD}"
+      ETH_USDT_CONTRACT: "${ETH_USDT_CONTRACT:-}"
+      ETH_USDT_DECIMALS: "${ETH_USDT_DECIMALS:-6}"
+      ETH_USDC_CONTRACT: "${ETH_USDC_CONTRACT:-}"
+      ETH_USDC_DECIMALS: "${ETH_USDC_DECIMALS:-6}"
+      ETH_PYUSD_CONTRACT: "${ETH_PYUSD_CONTRACT:-}"
+      ETH_PYUSD_DECIMALS: "${ETH_PYUSD_DECIMALS:-6}"
+    depends_on:
+      - mariadb
+      - redis
+
+  polygon-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-polygon-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "MATIC"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${POLYGON_FULLNODE_URL:-https://polygon-bor-rpc.publicnode.com}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${POLYGON_ACCOUNT_PASSWORD}"
+      EVM_CHAIN_ID: "${POLYGON_CHAIN_ID:-137}"
+      POLYGON_USERNAME: "${POLYGON_USERNAME}"
+      POLYGON_PASSWORD: "${POLYGON_PASSWORD}"
+      POLYGON_USDT_CONTRACT: "${POLYGON_USDT_CONTRACT:-}"
+      POLYGON_USDT_DECIMALS: "${POLYGON_USDT_DECIMALS:-6}"
+      POLYGON_USDC_CONTRACT: "${POLYGON_USDC_CONTRACT:-}"
+      POLYGON_USDC_DECIMALS: "${POLYGON_USDC_DECIMALS:-6}"
+    depends_on:
+      - mariadb
+      - redis
+
+  avalanche-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-avalanche-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "AVAX"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${AVALANCHE_FULLNODE_URL:-https://avalanche-c-chain-rpc.publicnode.com}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${AVALANCHE_ACCOUNT_PASSWORD}"
+      EVM_CHAIN_ID: "${AVALANCHE_CHAIN_ID:-43114}"
+      AVALANCHE_USERNAME: "${AVALANCHE_USERNAME}"
+      AVALANCHE_PASSWORD: "${AVALANCHE_PASSWORD}"
+      AVALANCHE_USDT_CONTRACT: "${AVALANCHE_USDT_CONTRACT:-}"
+      AVALANCHE_USDT_DECIMALS: "${AVALANCHE_USDT_DECIMALS:-6}"
+      AVALANCHE_USDC_CONTRACT: "${AVALANCHE_USDC_CONTRACT:-}"
+      AVALANCHE_USDC_DECIMALS: "${AVALANCHE_USDC_DECIMALS:-6}"
+    depends_on:
+      - mariadb
+      - redis
+
+  arbitrum-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-arbitrum-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "ARBETH"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${ARBITRUM_FULLNODE_URL:-https://arbitrum-one-rpc.publicnode.com}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${ARB_ACCOUNT_PASSWORD}"
+      EVM_CHAIN_ID: "${ARB_CHAIN_ID:-42161}"
+      ARB_USERNAME: "${ARB_USERNAME}"
+      ARB_PASSWORD: "${ARB_PASSWORD}"
+      ARB_USDC_CONTRACT: "${ARB_USDC_CONTRACT:-}"
+      ARB_USDC_DECIMALS: "${ARB_USDC_DECIMALS:-6}"
+      ARB_PYUSD_CONTRACT: "${ARB_PYUSD_CONTRACT:-}"
+      ARB_PYUSD_DECIMALS: "${ARB_PYUSD_DECIMALS:-6}"
+      ARB_TOKEN_CONTRACT: "${ARB_TOKEN_CONTRACT:-}"
+      ARB_TOKEN_DECIMALS: "${ARB_TOKEN_DECIMALS:-}"
+    depends_on:
+      - mariadb
+      - redis
+
+  optimism-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-optimism-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "OPETH"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${OPTIMISM_FULLNODE_URL:-https://optimism-rpc.publicnode.com}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${OP_ACCOUNT_PASSWORD}"
+      EVM_CHAIN_ID: "${OP_CHAIN_ID:-10}"
+      OP_USERNAME: "${OP_USERNAME}"
+      OP_PASSWORD: "${OP_PASSWORD}"
+      OP_USDT_CONTRACT: "${OP_USDT_CONTRACT:-}"
+      OP_USDT_DECIMALS: "${OP_USDT_DECIMALS:-6}"
+      OP_USDC_CONTRACT: "${OP_USDC_CONTRACT:-}"
+      OP_USDC_DECIMALS: "${OP_USDC_DECIMALS:-6}"
+      OP_TOKEN_CONTRACT: "${OP_TOKEN_CONTRACT:-}"
+      OP_TOKEN_DECIMALS: "${OP_TOKEN_DECIMALS:-}"
+    depends_on:
+      - mariadb
+      - redis
+
+  xmr-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-xmr-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "XMR"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      MONERO_DAEMON_URL: "${MONERO_DAEMON_URL:-http://monerod:18081}"
+      MONERO_WALLET_RPC_URL: "${MONERO_WALLET_RPC_URL:-http://monero-wallet-rpc:18083}"
+      MONERO_DAEMON_USER: "${MONERO_DAEMON_USER:-}"
+      MONERO_DAEMON_PASS: "${MONERO_DAEMON_PASS:-}"
+      MONERO_WALLET_RPC_USER: "${MONERO_WALLET_RPC_USER:-}"
+      MONERO_WALLET_RPC_PASS: "${MONERO_WALLET_RPC_PASS:-}"
+      MONERO_USERNAME: "${MONERO_USERNAME}"
+      MONERO_PASSWORD: "${MONERO_PASSWORD}"
+    depends_on:
+      - mariadb
+      - redis
+
+  xrp-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-xrp-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "XRP"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      FULLNODE_URL: "${XRP_FULLNODE_URL:-https://s1.ripple.com:51234}"
+      XRP_ACCOUNT_ADDRESS: "${XRP_ACCOUNT_ADDRESS:-}"
+      XRP_ACCOUNT_SECRET: "${XRP_ACCOUNT_SECRET:-}"
+      XRP_USERNAME: "${XRP_USERNAME}"
+      XRP_PASSWORD: "${XRP_PASSWORD}"
+      XRP_RPC_USERNAME: "${XRP_RPC_USERNAME:-}"
+      XRP_RPC_PASSWORD: "${XRP_RPC_PASSWORD:-}"
+    depends_on:
+      - mariadb
+      - redis
+
+  solana-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    container_name: go-solana-worker
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      CHAIN_MODULE: "SOL"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      FULLNODE_URL: "${SOLANA_FULLNODE_URL:-https://api.mainnet-beta.solana.com}"
+      ACCOUNT_PASSWORD: "${SOLANA_ACCOUNT_PASSWORD}"
+      SOLANA_USERNAME: "${SOLANA_USERNAME}"
+      SOLANA_PASSWORD: "${SOLANA_PASSWORD}"
+      SOLANA_RPC_USERNAME: "${SOLANA_RPC_USERNAME:-}"
+      SOLANA_RPC_PASSWORD: "${SOLANA_RPC_PASSWORD:-}"
+      SOLANA_TOKEN_MIN_FEE_SOL: "${SOLANA_TOKEN_MIN_FEE_SOL:-0.003}"
+      SOLANA_USDT_MINT: "${SOLANA_USDT_MINT:-Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB}"
+      SOLANA_USDT_DECIMALS: "${SOLANA_USDT_DECIMALS:-6}"
+      SOLANA_USDC_MINT: "${SOLANA_USDC_MINT:-EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v}"
+      SOLANA_USDC_DECIMALS: "${SOLANA_USDC_DECIMALS:-6}"
+      SOLANA_PYUSD_MINT: "${SOLANA_PYUSD_MINT:-2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo}"
+      SOLANA_PYUSD_DECIMALS: "${SOLANA_PYUSD_DECIMALS:-6}"
+      SOLANA_PYUSD_TOKEN_PROGRAM: "${SOLANA_PYUSD_TOKEN_PROGRAM:-TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb}"
+    depends_on:
+      - mariadb
+      - redis
+
+  mariadb:
+    image: mariadb:10.9.3
+    container_name: mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
+      MYSQL_DATABASE: "shkeeper"
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mariadb-data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+
+volumes:
+  mariadb-data:

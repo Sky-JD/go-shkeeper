@@ -1,0 +1,816 @@
+{
+    "main_url":  "http://shkeeper:5000",
+    "worker_urls":  {
+                        "btc":  "http://btc-worker:6000",
+                        "ltc":  "http://ltc-worker:6000",
+                        "doge":  "http://doge-worker:6000",
+                        "firo":  "http://firo-worker:6000",
+                        "lightning":  "http://btc-lightning-worker:6000",
+                        "eth":  "http://eth-worker:6000",
+                        "tron":  "http://tron-worker:6000",
+                        "bnb":  "http://bnb-worker:6000",
+                        "polygon":  "http://polygon-worker:6000",
+                        "avalanche":  "http://avalanche-worker:6000",
+                        "arbitrum":  "http://arbitrum-worker:6000",
+                        "optimism":  "http://optimism-worker:6000",
+                        "xmr":  "http://xmr-worker:6000",
+                        "xrp":  "http://xrp-worker:6000",
+                        "solana":  "http://solana-worker:6000"
+                    },
+    "api_key":  "replace-with-wallet-api-key",
+    "crypto":  "BTC",
+    "cryptos":  [
+                    "BTC",
+                    "BTC-LIGHTNING",
+                    "LTC",
+                    "DOGE",
+                    "FIRO",
+                    "FIRO-SPARK",
+                    "ETH",
+                    "ETH-USDT",
+                    "ETH-USDC",
+                    "ETH-PYUSD",
+                    "TRX",
+                    "USDT",
+                    "USDC",
+                    "BNB",
+                    "BNB-USDT",
+                    "BNB-USDC",
+                    "MATIC",
+                    "POLYGON-USDT",
+                    "POLYGON-USDC",
+                    "AVAX",
+                    "AVALANCHE-USDT",
+                    "AVALANCHE-USDC",
+                    "SOL",
+                    "SOLANA-USDT",
+                    "SOLANA-USDC",
+                    "SOLANA-PYUSD",
+                    "XRP",
+                    "ARBETH",
+                    "ARB-USDC",
+                    "ARB-PYUSD",
+                    "ARB-TOKEN",
+                    "OPETH",
+                    "OP-USDT",
+                    "OP-USDC",
+                    "OP-TOKEN",
+                    "XMR"
+                ],
+    "coverage_cryptos":  [
+                             "BTC",
+                             "BTC-LIGHTNING",
+                             "LTC",
+                             "DOGE",
+                             "FIRO",
+                             "FIRO-SPARK",
+                             "ETH",
+                             "ETH-USDT",
+                             "ETH-USDC",
+                             "ETH-PYUSD",
+                             "TRX",
+                             "USDT",
+                             "USDC",
+                             "BNB",
+                             "BNB-USDT",
+                             "BNB-USDC",
+                             "MATIC",
+                             "POLYGON-USDT",
+                             "POLYGON-USDC",
+                             "AVAX",
+                             "AVALANCHE-USDT",
+                             "AVALANCHE-USDC",
+                             "SOL",
+                             "SOLANA-USDT",
+                             "SOLANA-USDC",
+                             "SOLANA-PYUSD",
+                             "XRP",
+                             "ARBETH",
+                             "ARB-USDC",
+                             "ARB-PYUSD",
+                             "ARB-TOKEN",
+                             "OPETH",
+                             "OP-USDT",
+                             "OP-USDC",
+                             "OP-TOKEN",
+                             "XMR"
+                         ],
+    "main_status_check":  true,
+    "expect_server_status":  "Synced",
+    "order_external_id":  "replace-with-known-unpaid-or-payout-external-id",
+    "expect_status":  "UNPAID",
+    "order_requests":  100,
+    "order_concurrency":  20,
+    "order_max_latency_ms":  500,
+    "order_list_check":  true,
+    "order_list_status":  "UNPAID",
+    "order_list_crypto":  "BTC",
+    "order_list_limit":  50,
+    "order_list_min_results":  1,
+    "order_list_requests":  100,
+    "order_list_concurrency":  20,
+    "order_list_max_latency_ms":  500,
+    "order_status_matrix_check":  true,
+    "order_status_matrix_limit":  100,
+    "order_status_matrix_pages":  20,
+    "order_status_matrix_min":  1,
+    "requests":  100,
+    "concurrency":  20,
+    "timeout_seconds":  45,
+    "report_file":  "/deploy-reports/go-shkeeper-final-deploy-check-report.json",
+    "admin_username":  "admin",
+    "admin_password":  "replace-with-current-admin-password",
+    "admin_update_username":  "admin",
+    "admin_update_password":  "replace-with-staging-new-password",
+    "require_payment_coverage":  true,
+    "require_payout_coverage":  true,
+    "mutating":  true,
+    "payment_checks":  [
+                           {
+                               "name":  "payment-btc",
+                               "crypto":  "BTC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-btc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-btc-lightning",
+                               "crypto":  "BTC-LIGHTNING",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-btc-lightning",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-ltc",
+                               "crypto":  "LTC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-ltc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-doge",
+                               "crypto":  "DOGE",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-doge",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-firo",
+                               "crypto":  "FIRO",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-firo",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-firo-spark",
+                               "crypto":  "FIRO-SPARK",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-firo-spark",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-eth",
+                               "crypto":  "ETH",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-eth",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-eth-usdt",
+                               "crypto":  "ETH-USDT",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-eth-usdt",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-eth-usdc",
+                               "crypto":  "ETH-USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-eth-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-eth-pyusd",
+                               "crypto":  "ETH-PYUSD",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-eth-pyusd",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-trx",
+                               "crypto":  "TRX",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-trx",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-usdt",
+                               "crypto":  "USDT",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-usdt",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-usdc",
+                               "crypto":  "USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-bnb",
+                               "crypto":  "BNB",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-bnb",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-bnb-usdt",
+                               "crypto":  "BNB-USDT",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-bnb-usdt",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-bnb-usdc",
+                               "crypto":  "BNB-USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-bnb-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-matic",
+                               "crypto":  "MATIC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-matic",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-polygon-usdt",
+                               "crypto":  "POLYGON-USDT",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-polygon-usdt",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-polygon-usdc",
+                               "crypto":  "POLYGON-USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-polygon-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-avax",
+                               "crypto":  "AVAX",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-avax",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-avalanche-usdt",
+                               "crypto":  "AVALANCHE-USDT",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-avalanche-usdt",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-avalanche-usdc",
+                               "crypto":  "AVALANCHE-USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-avalanche-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-sol",
+                               "crypto":  "SOL",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-sol",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-solana-usdt",
+                               "crypto":  "SOLANA-USDT",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-solana-usdt",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-solana-usdc",
+                               "crypto":  "SOLANA-USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-solana-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-solana-pyusd",
+                               "crypto":  "SOLANA-PYUSD",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-solana-pyusd",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-xrp",
+                               "crypto":  "XRP",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-xrp",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-arbeth",
+                               "crypto":  "ARBETH",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-arbeth",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-arb-usdc",
+                               "crypto":  "ARB-USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-arb-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-arb-pyusd",
+                               "crypto":  "ARB-PYUSD",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-arb-pyusd",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-arb-token",
+                               "crypto":  "ARB-TOKEN",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-arb-token",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-opeth",
+                               "crypto":  "OPETH",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-opeth",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-op-usdt",
+                               "crypto":  "OP-USDT",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-op-usdt",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-op-usdc",
+                               "crypto":  "OP-USDC",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-op-usdc",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-op-token",
+                               "crypto":  "OP-TOKEN",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-op-token",
+                               "expect_status":  "UNPAID"
+                           },
+                           {
+                               "name":  "payment-xmr",
+                               "crypto":  "XMR",
+                               "fiat":  "USD",
+                               "amount":  "1",
+                               "external_id_prefix":  "final-cutover-payment-xmr",
+                               "expect_status":  "UNPAID"
+                           }
+                       ],
+    "payout_checks":  [
+                          {
+                              "name":  "payout-btc",
+                              "crypto":  "BTC",
+                              "amount":  "replace-with-btc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-btc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-btc"
+                          },
+                          {
+                              "name":  "payout-btc-lightning",
+                              "crypto":  "BTC-LIGHTNING",
+                              "amount":  "replace-with-btc-lightning-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-btc-lightning",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-btc-lightning"
+                          },
+                          {
+                              "name":  "payout-ltc",
+                              "crypto":  "LTC",
+                              "amount":  "replace-with-ltc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-ltc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-ltc"
+                          },
+                          {
+                              "name":  "payout-doge",
+                              "crypto":  "DOGE",
+                              "amount":  "replace-with-doge-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-doge",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-doge"
+                          },
+                          {
+                              "name":  "payout-firo",
+                              "crypto":  "FIRO",
+                              "amount":  "replace-with-firo-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-firo",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-firo"
+                          },
+                          {
+                              "name":  "payout-firo-spark",
+                              "crypto":  "FIRO-SPARK",
+                              "amount":  "replace-with-firo-spark-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-firo-spark",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-firo-spark"
+                          },
+                          {
+                              "name":  "payout-eth",
+                              "crypto":  "ETH",
+                              "amount":  "replace-with-eth-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-eth",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-eth"
+                          },
+                          {
+                              "name":  "payout-eth-usdt",
+                              "crypto":  "ETH-USDT",
+                              "amount":  "replace-with-eth-usdt-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-eth-usdt",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-eth-usdt"
+                          },
+                          {
+                              "name":  "payout-eth-usdc",
+                              "crypto":  "ETH-USDC",
+                              "amount":  "replace-with-eth-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-eth-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-eth-usdc"
+                          },
+                          {
+                              "name":  "payout-eth-pyusd",
+                              "crypto":  "ETH-PYUSD",
+                              "amount":  "replace-with-eth-pyusd-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-eth-pyusd",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-eth-pyusd"
+                          },
+                          {
+                              "name":  "payout-trx",
+                              "crypto":  "TRX",
+                              "amount":  "replace-with-trx-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-trx",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-trx"
+                          },
+                          {
+                              "name":  "payout-usdt",
+                              "crypto":  "USDT",
+                              "amount":  "replace-with-usdt-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-usdt",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-usdt"
+                          },
+                          {
+                              "name":  "payout-usdc",
+                              "crypto":  "USDC",
+                              "amount":  "replace-with-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-usdc"
+                          },
+                          {
+                              "name":  "payout-bnb",
+                              "crypto":  "BNB",
+                              "amount":  "replace-with-bnb-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-bnb",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-bnb"
+                          },
+                          {
+                              "name":  "payout-bnb-usdt",
+                              "crypto":  "BNB-USDT",
+                              "amount":  "replace-with-bnb-usdt-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-bnb-usdt",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-bnb-usdt"
+                          },
+                          {
+                              "name":  "payout-bnb-usdc",
+                              "crypto":  "BNB-USDC",
+                              "amount":  "replace-with-bnb-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-bnb-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-bnb-usdc"
+                          },
+                          {
+                              "name":  "payout-matic",
+                              "crypto":  "MATIC",
+                              "amount":  "replace-with-matic-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-matic",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-matic"
+                          },
+                          {
+                              "name":  "payout-polygon-usdt",
+                              "crypto":  "POLYGON-USDT",
+                              "amount":  "replace-with-polygon-usdt-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-polygon-usdt",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-polygon-usdt"
+                          },
+                          {
+                              "name":  "payout-polygon-usdc",
+                              "crypto":  "POLYGON-USDC",
+                              "amount":  "replace-with-polygon-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-polygon-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-polygon-usdc"
+                          },
+                          {
+                              "name":  "payout-avax",
+                              "crypto":  "AVAX",
+                              "amount":  "replace-with-avax-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-avax",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-avax"
+                          },
+                          {
+                              "name":  "payout-avalanche-usdt",
+                              "crypto":  "AVALANCHE-USDT",
+                              "amount":  "replace-with-avalanche-usdt-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-avalanche-usdt",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-avalanche-usdt"
+                          },
+                          {
+                              "name":  "payout-avalanche-usdc",
+                              "crypto":  "AVALANCHE-USDC",
+                              "amount":  "replace-with-avalanche-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-avalanche-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-avalanche-usdc"
+                          },
+                          {
+                              "name":  "payout-sol",
+                              "crypto":  "SOL",
+                              "amount":  "replace-with-sol-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-sol",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-sol"
+                          },
+                          {
+                              "name":  "payout-solana-usdt",
+                              "crypto":  "SOLANA-USDT",
+                              "amount":  "replace-with-solana-usdt-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-solana-usdt",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-solana-usdt"
+                          },
+                          {
+                              "name":  "payout-solana-usdc",
+                              "crypto":  "SOLANA-USDC",
+                              "amount":  "replace-with-solana-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-solana-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-solana-usdc"
+                          },
+                          {
+                              "name":  "payout-solana-pyusd",
+                              "crypto":  "SOLANA-PYUSD",
+                              "amount":  "replace-with-solana-pyusd-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-solana-pyusd",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-solana-pyusd"
+                          },
+                          {
+                              "name":  "payout-xrp",
+                              "crypto":  "XRP",
+                              "amount":  "replace-with-xrp-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-xrp",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-xrp"
+                          },
+                          {
+                              "name":  "payout-arbeth",
+                              "crypto":  "ARBETH",
+                              "amount":  "replace-with-arbeth-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-arbeth",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-arbeth"
+                          },
+                          {
+                              "name":  "payout-arb-usdc",
+                              "crypto":  "ARB-USDC",
+                              "amount":  "replace-with-arb-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-arb-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-arb-usdc"
+                          },
+                          {
+                              "name":  "payout-arb-pyusd",
+                              "crypto":  "ARB-PYUSD",
+                              "amount":  "replace-with-arb-pyusd-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-arb-pyusd",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-arb-pyusd"
+                          },
+                          {
+                              "name":  "payout-arb-token",
+                              "crypto":  "ARB-TOKEN",
+                              "amount":  "replace-with-arb-token-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-arb-token",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-arb-token"
+                          },
+                          {
+                              "name":  "payout-opeth",
+                              "crypto":  "OPETH",
+                              "amount":  "replace-with-opeth-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-opeth",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-opeth"
+                          },
+                          {
+                              "name":  "payout-op-usdt",
+                              "crypto":  "OP-USDT",
+                              "amount":  "replace-with-op-usdt-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-op-usdt",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-op-usdt"
+                          },
+                          {
+                              "name":  "payout-op-usdc",
+                              "crypto":  "OP-USDC",
+                              "amount":  "replace-with-op-usdc-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-op-usdc",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-op-usdc"
+                          },
+                          {
+                              "name":  "payout-op-token",
+                              "crypto":  "OP-TOKEN",
+                              "amount":  "replace-with-op-token-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-op-token",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-op-token"
+                          },
+                          {
+                              "name":  "payout-xmr",
+                              "crypto":  "XMR",
+                              "amount":  "replace-with-xmr-small-value-amount",
+                              "external_id_prefix":  "final-cutover-payout-xmr",
+                              "expect_status":  "IN_PROGRESS",
+                              "destination_from_payment":  "payment-xmr"
+                          }
+                      ],
+    "worker_address_checks":  [
+                                  {
+                                      "name":  "btc-address-proof",
+                                      "worker":  "btc",
+                                      "crypto":  "BTC",
+                                      "username":  "replace-with-btc-worker-user",
+                                      "password":  "replace-with-btc-worker-password"
+                                  },
+                                  {
+                                      "name":  "ltc-address-proof",
+                                      "worker":  "ltc",
+                                      "crypto":  "LTC",
+                                      "username":  "replace-with-ltc-worker-user",
+                                      "password":  "replace-with-ltc-worker-password"
+                                  },
+                                  {
+                                      "name":  "doge-address-proof",
+                                      "worker":  "doge",
+                                      "crypto":  "DOGE",
+                                      "username":  "replace-with-doge-worker-user",
+                                      "password":  "replace-with-doge-worker-password"
+                                  },
+                                  {
+                                      "name":  "firo-address-proof",
+                                      "worker":  "firo",
+                                      "crypto":  "FIRO",
+                                      "username":  "replace-with-firo-worker-user",
+                                      "password":  "replace-with-firo-worker-password"
+                                  },
+                                  {
+                                      "name":  "lightning-invoice-proof",
+                                      "worker":  "lightning",
+                                      "crypto":  "BTC-LIGHTNING",
+                                      "username":  "replace-with-lightning-worker-user",
+                                      "password":  "replace-with-lightning-worker-password",
+                                      "amount":  "1"
+                                  },
+                                  {
+                                      "name":  "eth-address-proof",
+                                      "worker":  "eth",
+                                      "crypto":  "ETH",
+                                      "username":  "replace-with-eth-worker-user",
+                                      "password":  "replace-with-eth-worker-password"
+                                  },
+                                  {
+                                      "name":  "tron-address-proof",
+                                      "worker":  "tron",
+                                      "crypto":  "TRX",
+                                      "username":  "replace-with-tron-worker-user",
+                                      "password":  "replace-with-tron-worker-password"
+                                  },
+                                  {
+                                      "name":  "bnb-address-proof",
+                                      "worker":  "bnb",
+                                      "crypto":  "BNB",
+                                      "username":  "replace-with-bnb-worker-user",
+                                      "password":  "replace-with-bnb-worker-password"
+                                  },
+                                  {
+                                      "name":  "polygon-address-proof",
+                                      "worker":  "polygon",
+                                      "crypto":  "MATIC",
+                                      "username":  "replace-with-polygon-worker-user",
+                                      "password":  "replace-with-polygon-worker-password"
+                                  },
+                                  {
+                                      "name":  "avalanche-address-proof",
+                                      "worker":  "avalanche",
+                                      "crypto":  "AVAX",
+                                      "username":  "replace-with-avalanche-worker-user",
+                                      "password":  "replace-with-avalanche-worker-password"
+                                  },
+                                  {
+                                      "name":  "arbitrum-address-proof",
+                                      "worker":  "arbitrum",
+                                      "crypto":  "ARBETH",
+                                      "username":  "replace-with-arbitrum-worker-user",
+                                      "password":  "replace-with-arbitrum-worker-password"
+                                  },
+                                  {
+                                      "name":  "optimism-address-proof",
+                                      "worker":  "optimism",
+                                      "crypto":  "OPETH",
+                                      "username":  "replace-with-optimism-worker-user",
+                                      "password":  "replace-with-optimism-worker-password"
+                                  },
+                                  {
+                                      "name":  "xmr-address-proof",
+                                      "worker":  "xmr",
+                                      "crypto":  "XMR",
+                                      "username":  "replace-with-xmr-worker-user",
+                                      "password":  "replace-with-xmr-worker-password"
+                                  },
+                                  {
+                                      "name":  "xrp-address-proof",
+                                      "worker":  "xrp",
+                                      "crypto":  "XRP",
+                                      "username":  "replace-with-xrp-worker-user",
+                                      "password":  "replace-with-xrp-worker-password"
+                                  },
+                                  {
+                                      "name":  "solana-address-proof",
+                                      "worker":  "solana",
+                                      "crypto":  "SOL",
+                                      "username":  "replace-with-solana-worker-user",
+                                      "password":  "replace-with-solana-worker-password"
+                                  }
+                              ]
+}

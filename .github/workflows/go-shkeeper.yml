@@ -1,0 +1,546 @@
+name: go-shkeeper
+
+on:
+  push:
+    branches:
+      - main
+      - "zh/**"
+    paths:
+      - "cmd/**"
+      - "contrib/**"
+      - "deploy/**"
+      - "internal/**"
+      - ".github/workflows/go-shkeeper.yml"
+      - "Dockerfile"
+      - "docker-compose.example.yml"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "contrib/**"
+      - "deploy/**"
+      - "internal/**"
+      - ".github/workflows/go-shkeeper.yml"
+      - "Dockerfile"
+      - "docker-compose.example.yml"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: rootpass
+          MARIADB_DATABASE: go_shkeeper_test
+          MARIADB_USER: shkeeper
+          MARIADB_PASSWORD: shkeeper
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mariadb-admin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Test with MariaDB
+        env:
+          GO_SHKEEPER_TEST_DATABASE_URL: mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test
+        run: go test -p 1 ./...
+
+      - name: Verify redacted final plan
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          printf '%s' 'ci-api-secret-redacted' > "$tmp/api_key"
+          printf '%s' 'ci-admin-secret-redacted' > "$tmp/admin_password"
+          printf '%s' 'ci-admin-update-secret-redacted' > "$tmp/admin_update_password"
+          printf '%s' 'ci-worker-secret-redacted' > "$tmp/worker_password"
+
+          FINAL_PLAN_REDACT_SECRETS=true \
+          FINAL_PLAN_USE_WALLET_CRYPTOS=false \
+          FINAL_PLAN_CRYPTOS=BNB-USDT \
+          FINAL_PLAN_API_KEY_FILE="$tmp/api_key" \
+          FINAL_PLAN_ADMIN_PASSWORD_FILE="$tmp/admin_password" \
+          FINAL_PLAN_ADMIN_UPDATE_PASSWORD_FILE="$tmp/admin_update_password" \
+          FINAL_PLAN_WORKER_USERNAME=worker \
+          FINAL_PLAN_WORKER_PASSWORD_FILE="$tmp/worker_password" \
+          FINAL_PLAN_PAYOUT_AMOUNT=0.01 \
+          FINAL_PLAN_OUTPUT_FILE="$tmp/plan.json" \
+          FINAL_PLAN_READINESS_FILE="$tmp/readiness.json" \
+          go run ./cmd/final-plan
+
+          for secret in ci-api-secret-redacted ci-admin-secret-redacted ci-admin-update-secret-redacted ci-worker-secret-redacted; do
+            if grep -R "$secret" "$tmp/plan.json" "$tmp/readiness.json"; then
+              echo "redacted final plan leaked secret: $secret"
+              exit 1
+            fi
+          done
+          grep -q '"status": "ready"' "$tmp/readiness.json"
+          grep -q '"secret_override_fields"' "$tmp/plan.json"
+          grep -q '"api_key"' "$tmp/plan.json"
+
+      - name: Reject SQLite and Python dependencies
+        run: |
+          if go list -m all | grep -Ei 'sqlite|modernc|go-sqlite|sqlite3|pyotp|python'; then
+            exit 1
+          fi
+
+      - name: Reject active SQLite and Python source
+        run: |
+          scan_files="contrib/shkeeper-change-password.sh Dockerfile docker-compose.example.yml deploy/hk-16-16-staging-rehearsal.sh deploy/hk-16-16-production-cutover.sh deploy/hk-16-16-final-readiness.sh deploy/hk-16-16-async-final-readiness.sh deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml"
+          matches="$(grep -nE '(^|[[:space:];|&])(python|python3|pip|pip3|sqlite3)([[:space:];|&]|$)|sqlite://|shkeeper\.sqlite|requirements\.txt' $scan_files || true)"
+          if [ -n "$matches" ]; then
+            echo "$matches"
+            exit 1
+          fi
+
+      - name: Build Docker image
+        run: docker build -t go-shkeeper-ci .
+
+      - name: Audit Docker runtime image
+        run: |
+          docker run --rm go-shkeeper-ci /app/runtime-audit >/tmp/go-shkeeper-runtime-audit.json
+          grep -q '"status": "ok"' /tmp/go-shkeeper-runtime-audit.json
+          if docker run --rm go-shkeeper-ci sh -lc 'found=0; for cmd in python python3 pip pip3 sqlite3; do if command -v "$cmd"; then found=1; fi; done; exit "$found"'; then
+            true
+          else
+            exit 1
+          fi
+
+      - name: Smoke Docker image API with MariaDB
+        run: |
+          docker rm -f go-shkeeper-smoke >/dev/null 2>&1 || true
+          docker rm -f go-shkeeper-worker-smoke >/dev/null 2>&1 || true
+          stub_pid=""
+          cat >/tmp/go-shkeeper-stub-worker.go <<'EOF'
+          package main
+
+          import (
+            "encoding/json"
+            "net/http"
+            "strings"
+          )
+
+          func main() {
+            http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+              writeJSON(w, map[string]any{"status": "ok", "module": "BTC"})
+            })
+            http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+              writeJSON(w, map[string]any{"status": "ready", "module": "BTC"})
+            })
+            http.HandleFunc("/BTC/status", func(w http.ResponseWriter, r *http.Request) {
+              writeJSON(w, map[string]any{"server": "Synced", "balance": "1"})
+            })
+            http.HandleFunc("/BTC/generate-address", func(w http.ResponseWriter, r *http.Request) {
+              writeJSON(w, map[string]any{"address": "ci-generated-btc-address"})
+            })
+            http.HandleFunc("/BTC/payout/", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method != http.MethodPost {
+                http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+                return
+              }
+              if len(strings.Split(strings.TrimPrefix(r.URL.Path, "/BTC/payout/"), "/")) < 2 {
+                http.Error(w, "bad payout path", http.StatusBadRequest)
+                return
+              }
+              writeJSON(w, map[string]any{"task_id": "ci-stub-task", "result": []string{"ci-stub-txid"}})
+            })
+            _ = http.ListenAndServe(":6001", nil)
+          }
+
+          func writeJSON(w http.ResponseWriter, payload any) {
+            w.Header().Set("Content-Type", "application/json")
+            _ = json.NewEncoder(w).Encode(payload)
+          }
+          EOF
+          go run /tmp/go-shkeeper-stub-worker.go >/tmp/go-shkeeper-stub-worker.log 2>&1 &
+          stub_pid=$!
+          docker run -d --name go-shkeeper-smoke --network host \
+            -e MARIADB_DATABASE_URL=mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test \
+            -e SECRET_KEY=ci-secret-key \
+            -e SUGGESTED_WALLET_APIKEY=ci-api-key \
+            -e SHKEEPER_CRYPTOS=BTC \
+            -e SCHEDULER_ENABLED=false \
+            -e BTC_API_SERVER_HOST=127.0.0.1 \
+            -e BTC_SERVER_PORT=6001 \
+            -e BTC_USERNAME=ci-stub \
+            -e BTC_PASSWORD=ci-stub-pass \
+            go-shkeeper-ci
+          cleanup() {
+            docker logs go-shkeeper-smoke || true
+            docker logs go-shkeeper-worker-smoke || true
+            cat /tmp/go-shkeeper-stub-worker.log || true
+            docker rm -f go-shkeeper-smoke >/dev/null 2>&1 || true
+            docker rm -f go-shkeeper-worker-smoke >/dev/null 2>&1 || true
+            if [ -n "$stub_pid" ]; then
+              kill "$stub_pid" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:6001/readyz >/tmp/go-shkeeper-stub-ready.json; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:6001/readyz | grep -q '"status":"ready"'
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5000/healthz >/tmp/go-shkeeper-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:5000/healthz | grep -q '"status":"ok"'
+          curl -fsS http://127.0.0.1:5000/readyz | grep -q '"status":"ready"'
+
+          docker run --rm --network host mariadb:11.4 mariadb \
+            -h127.0.0.1 -ushkeeper -pshkeeper go_shkeeper_test \
+            -e "UPDATE wallet SET apikey = 'ci-api-key'; UPDATE exchange_rate SET source = 'manual', rate = 10000, fee = 0, fixed_fee = 0, fee_policy = 'PERCENT_FEE' WHERE crypto = 'BTC' AND fiat = 'USD'; INSERT INTO invoice (crypto, addr, external_id, fiat, callback_url, balance_fiat, balance_crypto, amount_fiat, amount_crypto, exchange_rate, status) VALUES ('BTC', 'ci-btc-address', 'ci-unpaid-order', 'USD', 'https://example.invalid/callback', 0, 0, 10, 0.001, 10000, 'UNPAID');"
+
+          curl -fsS -H "X-Shkeeper-Api-Key: ci-api-key" \
+            http://127.0.0.1:5000/api/v1/orders/ci-unpaid-order >/tmp/go-shkeeper-order.json
+          grep -q '"external_id":"ci-unpaid-order"' /tmp/go-shkeeper-order.json
+          grep -q '"status":"UNPAID"' /tmp/go-shkeeper-order.json
+          curl -fsS -X POST \
+            -d "pw1=ci-admin-pass" \
+            -d "pw2=ci-admin-pass" \
+            http://127.0.0.1:5000/set-password >/tmp/go-shkeeper-set-password.out
+          docker run --rm --network host \
+            -e MARIADB_DATABASE_URL=mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test \
+            -e ADMIN_USERNAME=admin \
+            -e ADMIN_PASSWORD=ci-admin-pass \
+            go-shkeeper-ci /app/admin-account >/tmp/go-shkeeper-admin-account.json
+          grep -q '"status":"ok"' /tmp/go-shkeeper-admin-account.json
+          grep -q '"username":"admin"' /tmp/go-shkeeper-admin-account.json
+
+          docker run -d --name go-shkeeper-worker-smoke --network host \
+            -e CHAIN_MODULE=BNB \
+            -e CHAIN_WORKER_LISTEN=:6000 \
+            -e MARIADB_DATABASE_URL=mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test \
+            -e ACCOUNT_PASSWORD=ci-account-password \
+            -e BNB_USERNAME=ci-worker \
+            -e BNB_PASSWORD=ci-worker-pass \
+            go-shkeeper-ci /app/chain-worker
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:6000/readyz >/tmp/go-shkeeper-worker-ready.json; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:6000/readyz | grep -q '"status":"ready"'
+          curl -fsS http://127.0.0.1:6000/healthz | grep -q '"module":"BNB"'
+
+          cat >/tmp/go-shkeeper-deploy-check.plan.json <<'EOF'
+          {
+            "main_url": "http://127.0.0.1:5000",
+            "worker_urls": {
+              "bnb": "http://127.0.0.1:6000",
+              "btc-stub": "http://127.0.0.1:6001"
+            },
+            "api_key": "ci-api-key",
+            "order_external_id": "ci-unpaid-order",
+            "expect_status": "UNPAID",
+            "order_requests": 12,
+            "order_concurrency": 4,
+            "order_max_latency_ms": 1000,
+            "order_list_check": true,
+            "order_list_status": "UNPAID",
+            "order_list_crypto": "BTC",
+            "order_list_limit": 20,
+            "order_list_min_results": 1,
+            "order_list_requests": 12,
+            "order_list_concurrency": 4,
+            "order_list_max_latency_ms": 1000,
+            "order_status_matrix_check": true,
+            "order_status_matrix_expect_statuses": ["UNPAID"],
+            "order_status_matrix_min": 1,
+            "coverage_cryptos": ["BTC"],
+            "crypto": "BTC",
+            "admin_username": "admin",
+            "admin_password": "ci-admin-pass",
+            "admin_update_username": "ci-admin2",
+            "admin_update_password": "ci-admin-pass-2",
+            "mutating": true,
+            "require_payment_coverage": true,
+            "require_payout_coverage": true,
+            "concurrency": 4,
+            "requests": 12,
+            "payment_checks": [
+              {
+                "name": "ci-btc-invoice",
+                "crypto": "BTC",
+                "fiat": "USD",
+                "amount": "10",
+                "external_id": "ci-payment-order",
+                "callback_url": "https://example.invalid/payment-callback",
+                "expect_status": "UNPAID"
+              }
+            ],
+            "payout_checks": [
+              {
+                "name": "ci-btc-stub",
+                "crypto": "BTC",
+                "destination": "bc1ci-stub-destination",
+                "amount": "0.0001",
+                "fee": "2",
+                "external_id": "ci-payout-order",
+                "expect_status": "IN_PROGRESS"
+              }
+            ],
+            "worker_address_checks": [
+              {
+                "name": "ci-btc-stub-address",
+                "worker": "btc-stub",
+                "crypto": "BTC",
+                "username": "ci-stub",
+                "password": "ci-stub-pass"
+              },
+              {
+                "name": "ci-bnb-address",
+                "worker": "bnb",
+                "crypto": "BNB",
+                "username": "ci-worker",
+                "password": "ci-worker-pass"
+              }
+            ]
+          }
+          EOF
+
+          docker run --rm --network host \
+            -v /tmp:/tmp \
+            -v /tmp/go-shkeeper-deploy-check.plan.json:/deploy-check.plan.json:ro \
+            -e DEPLOY_CHECK_PLAN_FILE=/deploy-check.plan.json \
+            -e DEPLOY_CHECK_REPORT_FILE=/tmp/go-shkeeper-deploy-check-report.json \
+            go-shkeeper-ci /app/deploy-check
+
+          cat >/tmp/go-shkeeper-validate-report.go <<'EOF'
+          package main
+
+          import (
+            "encoding/json"
+            "fmt"
+            "os"
+            "strings"
+          )
+
+          type report struct {
+            Status string `json:"status"`
+            Checks []struct {
+              Name string `json:"name"`
+              Status string `json:"status"`
+              Details map[string]string `json:"details"`
+            } `json:"checks"`
+          }
+
+          func main() {
+            data, err := os.ReadFile(os.Args[1])
+            if err != nil {
+              panic(err)
+            }
+            var r report
+            if err := json.Unmarshal(data, &r); err != nil {
+              panic(err)
+            }
+            if r.Status != "ok" {
+              panic(fmt.Sprintf("unexpected deploy-check report status %q", r.Status))
+            }
+            required := map[string]bool{
+              "main_healthz": false,
+              "main_readyz": false,
+              "order_lookup": false,
+              "order_list": false,
+              "order_list_parallel": false,
+              "admin_account_roundtrip": false,
+              "worker_healthz": false,
+              "worker_readyz": false,
+              "worker_address": false,
+              "payment_request": false,
+              "payment_order": false,
+              "payout_dispatch": false,
+              "payout_status": false,
+              "payout_order": false,
+            }
+            for _, check := range r.Checks {
+              if check.Status != "ok" && check.Status != "skipped" {
+                panic(fmt.Sprintf("unexpected check status: %+v", check))
+              }
+              for name := range required {
+                if check.Status == "ok" && (check.Name == name || strings.HasPrefix(check.Name, name+" ")) {
+                  required[name] = true
+                }
+              }
+            }
+            for name, ok := range required {
+              if !ok {
+                panic(fmt.Sprintf("missing successful check %s in report", name))
+              }
+            }
+          }
+          EOF
+          go run /tmp/go-shkeeper-validate-report.go /tmp/go-shkeeper-deploy-check-report.json
+          docker run --rm --network host \
+            -v /tmp/go-shkeeper-deploy-check.plan.json:/deploy-check.plan.json:ro \
+            -v /tmp/go-shkeeper-deploy-check-report.json:/deploy-check-report.json:ro \
+            -e CUTOVER_AUDIT_PLAN_FILE=/deploy-check.plan.json \
+            -e CUTOVER_AUDIT_REPORT_FILES=/deploy-check-report.json \
+            -e CUTOVER_AUDIT_CRYPTOS=BTC \
+            -e CUTOVER_AUDIT_WORKERS=bnb,btc-stub \
+            -e CUTOVER_AUDIT_REQUIRE_MAIN_STATUS=false \
+            -e CUTOVER_AUDIT_REQUIRE_WORKER_ADDRESS=true \
+            -e CUTOVER_AUDIT_REQUIRE_PAYOUT_TXID=true \
+            go-shkeeper-ci /app/cutover-audit >/tmp/go-shkeeper-cutover-audit.json
+          docker ps --format '{{json .}}' >/tmp/go-shkeeper-container-inventory.jsonl
+          docker run --rm --network host \
+            -v /tmp/go-shkeeper-deploy-check-report.json:/deploy-check-report.json:ro \
+            -v /tmp/go-shkeeper-cutover-audit.json:/cutover-audit.json:ro \
+            -v /tmp/go-shkeeper-container-inventory.jsonl:/container-inventory.jsonl:ro \
+            -e POST_CUTOVER_MAIN_URL=http://127.0.0.1:5000 \
+            -e POST_CUTOVER_WORKER_URLS=bnb=http://127.0.0.1:6000,btc-stub=http://127.0.0.1:6001 \
+            -e POST_CUTOVER_DEPLOY_REPORT_FILES=/deploy-check-report.json \
+            -e POST_CUTOVER_AUDIT_FILE=/cutover-audit.json \
+            -e POST_CUTOVER_CONTAINER_INVENTORY_FILE=/container-inventory.jsonl \
+            -e POST_CUTOVER_EXPECTED_CONTAINERS=go-shkeeper-smoke=go-shkeeper-ci,go-shkeeper-worker-smoke=go-shkeeper-ci \
+            -e POST_CUTOVER_FORBIDDEN_CONTAINERS=bnb-shkeeper,bnb_tasks,tron-shkeeper,tron_tasks \
+            -e POST_CUTOVER_EXPECTED_IMAGES=go-shkeeper-ci \
+            -e POST_CUTOVER_FORBIDDEN_IMAGES=ghcr.io/sky-jd/shkeeper.io-zh,vsyshost/bnb-shkeeper,vsyshost/tron-shkeeper,python: \
+            go-shkeeper-ci /app/post-cutover-verify >/tmp/go-shkeeper-post-cutover.json
+          docker run --rm --network host \
+            -v /tmp/go-shkeeper-deploy-check.plan.json:/deploy-check.plan.json:ro \
+            -v /tmp/go-shkeeper-deploy-check-report.json:/deploy-check-report.json:ro \
+            -v /tmp/go-shkeeper-cutover-audit.json:/cutover-audit.json:ro \
+            -v /tmp/go-shkeeper-post-cutover.json:/post-cutover.json:ro \
+            -v /tmp:/tmp \
+            -e RELEASE_AUDIT_PLAN_FILE=/deploy-check.plan.json \
+            -e RELEASE_AUDIT_DEPLOY_REPORT_FILES=/deploy-check-report.json \
+            -e RELEASE_AUDIT_CUTOVER_AUDIT_FILE=/cutover-audit.json \
+            -e RELEASE_AUDIT_POST_CUTOVER_FILE=/post-cutover.json \
+            -e RELEASE_AUDIT_OUTPUT_FILE=/tmp/go-shkeeper-release-audit.json \
+            -e RELEASE_AUDIT_REQUIRE_IMPORT_SYNC=false \
+            -e RELEASE_AUDIT_REQUIRE_PREFLIGHT=false \
+            go-shkeeper-ci /app/release-audit
+          grep -q '"status": "pass"' /tmp/go-shkeeper-release-audit.json
+
+          docker run --rm \
+            -v /tmp:/deploy-reports \
+            go-shkeeper-ci sh -lc '/app/runtime-audit > /deploy-reports/go-shkeeper-runtime-audit.json'
+          docker run --rm --network host \
+            -v /tmp:/deploy-reports \
+            -e MARIADB_DATABASE_URL=mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test \
+            -e CUTOVER_PREFLIGHT_OUTPUT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json \
+            go-shkeeper-ci /app/cutover-preflight
+          docker stats --no-stream --format '{{json .}}' \
+            go-shkeeper-smoke go-shkeeper-worker-smoke \
+            > /tmp/go-shkeeper-container-stats.jsonl
+          cat >/tmp/go-shkeeper-final-readiness.json <<'EOF'
+          {
+            "status": "ready",
+            "coverage_cryptos": ["BTC"],
+            "workers": ["bnb", "btc-stub"],
+            "payment_check_count": 1,
+            "payout_check_count": 1,
+            "worker_address_count": 2,
+            "order_status_matrix_check": true,
+            "ready_for_deploy_check": true
+          }
+          EOF
+          docker run --rm \
+            -v /tmp:/deploy-reports \
+            -e GOAL_AUDIT_RUNTIME_AUDIT_FILE=/deploy-reports/go-shkeeper-runtime-audit.json \
+            -e GOAL_AUDIT_PREFLIGHT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json \
+            -e GOAL_AUDIT_READINESS_FILE=/deploy-reports/go-shkeeper-final-readiness.json \
+            -e GOAL_AUDIT_DEPLOY_REPORT_FILES=/deploy-reports/go-shkeeper-deploy-check-report.json \
+            -e GOAL_AUDIT_RELEASE_AUDIT_FILE=/deploy-reports/go-shkeeper-release-audit.json \
+            -e GOAL_AUDIT_POST_CUTOVER_FILE=/deploy-reports/go-shkeeper-post-cutover.json \
+            -e GOAL_AUDIT_CONTAINER_INVENTORY_FILE=/deploy-reports/go-shkeeper-container-inventory.jsonl \
+            -e GOAL_AUDIT_CONTAINER_STATS_FILE=/deploy-reports/go-shkeeper-container-stats.jsonl \
+            -e GOAL_AUDIT_MAX_CONTAINER_MEMORY_MB=512 \
+            -e GOAL_AUDIT_REQUIRE_STRICT_RELEASE_GATES=false \
+            -e GOAL_AUDIT_FORBIDDEN_CONTAINERS=bnb-shkeeper,bnb_tasks,tron-shkeeper,tron_tasks \
+            -e GOAL_AUDIT_EXPECTED_GO_IMAGE=go-shkeeper-ci \
+            -e GOAL_AUDIT_OUTPUT_FILE=/deploy-reports/go-shkeeper-goal-audit.json \
+            go-shkeeper-ci /app/goal-audit
+          grep -q '"status": "pass"' /tmp/go-shkeeper-goal-audit.json
+
+          payment_rows="$(docker run --rm --network host mariadb:11.4 mariadb -N -B \
+            -h127.0.0.1 -ushkeeper -pshkeeper go_shkeeper_test \
+            -e "SELECT COUNT(*) FROM invoice WHERE external_id = 'ci-payment-order' AND crypto = 'BTC' AND status = 'UNPAID' AND addr = 'ci-generated-btc-address';")"
+          if [ "$payment_rows" != "1" ]; then
+            echo "expected one persisted CI payment invoice row, got $payment_rows"
+            exit 1
+          fi
+          payout_rows="$(docker run --rm --network host mariadb:11.4 mariadb -N -B \
+            -h127.0.0.1 -ushkeeper -pshkeeper go_shkeeper_test \
+            -e "SELECT COUNT(*) FROM payout WHERE external_id = 'ci-payout-order' AND crypto = 'BTC' AND status = 'IN_PROGRESS';")"
+          if [ "$payout_rows" != "1" ]; then
+            echo "expected one persisted CI payout row, got $payout_rows"
+            exit 1
+          fi
+          payout_tx_rows="$(docker run --rm --network host mariadb:11.4 mariadb -N -B \
+            -h127.0.0.1 -ushkeeper -pshkeeper go_shkeeper_test \
+            -e "SELECT COUNT(*) FROM payout_tx pt JOIN payout p ON p.id = pt.payout_id WHERE p.external_id = 'ci-payout-order' AND pt.txid = 'ci-stub-txid';")"
+          if [ "$payout_tx_rows" != "1" ]; then
+            echo "expected one persisted CI payout tx row, got $payout_tx_rows"
+            exit 1
+          fi
+          chain_account_rows="$(docker run --rm --network host mariadb:11.4 mariadb -N -B \
+            -h127.0.0.1 -ushkeeper -pshkeeper go_shkeeper_test \
+            -e "SELECT COUNT(*) FROM chain_account WHERE module = 'BNB' AND crypto = 'BNB' AND address <> '';")"
+          if [ "$chain_account_rows" -lt 1 ]; then
+            echo "expected at least one persisted BNB worker account row, got $chain_account_rows"
+            exit 1
+          fi
+
+      - name: Validate compose examples
+        run: |
+          for file in docker-compose.example.yml deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml; do
+            grep -hoE '\$\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\}' "$file" || true
+          done | sed -E 's/^\$\{//; s/[:}].*$//' | sort -u | while read -r name; do
+            case "$name" in
+              *_WALLET) value=disabled ;;
+              *_DECIMALS) value=6 ;;
+              *_CHAIN_ID|EVM_CHAIN_ID|BTC_ESTIMATE_TARGET_BLOCKS|LIGHTNING_INVOICE_TTL|TRON_TOKEN_FEE_LIMIT_SUN) value=1 ;;
+              *_URL|FULLNODE_URL|*_FULLNODE_URL|*_RPC_URL|LND_REST_URL|LNBITS_URL) value=http://example.invalid ;;
+              *_CONTRACT|*_MINT|*_TOKEN_PROGRAM|*_ADDRESS) value=0x0000000000000000000000000000000000000000 ;;
+              *_TLS_SKIP_VERIFY) value=false ;;
+              *_TOKEN_MIN_FEE_SOL) value=0.001 ;;
+              SHKEEPER_CRYPTOS) value=BTC ;;
+              *) value=ci-placeholder ;;
+            esac
+            printf '%s=%s\n' "$name" "$value"
+          done > .env.ci
+
+          docker compose --env-file .env.ci -f docker-compose.example.yml config >/dev/null
+          docker compose --env-file .env.ci -f deploy/hk-16-16.modular.example.yml config >/dev/null
+          docker compose --env-file .env.ci -f docker-compose.example.yml -f deploy/evm-worker.example.yml config >/dev/null

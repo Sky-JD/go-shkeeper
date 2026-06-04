@@ -1,0 +1,11 @@
+.env
+.env.*
+*.log
+*.tmp
+*.test
+coverage.out
+dist/
+build/
+bin/
+deploy-reports/
+tmp/

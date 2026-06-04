@@ -1,0 +1,54 @@
+x-worker-healthcheck: &worker-healthcheck
+  test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6000/readyz | grep -q '\"status\":\"ready\"'"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+services:
+  evm-worker:
+    image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
+    build:
+      context: ..
+    restart: unless-stopped
+    command: ["/app/chain-worker"]
+    healthcheck: *worker-healthcheck
+    environment:
+      # Supported values: ETH, MATIC, AVAX, ARBETH, OPETH, BNB.
+      CHAIN_MODULE: "${CHAIN_MODULE:-ETH}"
+      CHAIN_WORKER_LISTEN: ":6000"
+      MARIADB_DATABASE_URL: "mariadb://root:${MARIADB_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
+      DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
+      DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
+      DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      FULLNODE_URL: "${FULLNODE_URL}"
+      EVM_CHAIN_ID: "${EVM_CHAIN_ID:-1}"
+      SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      ACCOUNT_PASSWORD: "${EVM_ACCOUNT_PASSWORD}"
+
+      # Main service basic-auth compatibility. Pick names matching CHAIN_MODULE:
+      # ETH_USERNAME/ETH_PASSWORD, POLYGON_USERNAME/POLYGON_PASSWORD,
+      # AVALANCHE_USERNAME/AVALANCHE_PASSWORD, ARB_USERNAME/ARB_PASSWORD,
+      # OP_USERNAME/OP_PASSWORD, or BNB_USERNAME/BNB_PASSWORD.
+      ETH_USERNAME: "${ETH_USERNAME:-shkeeper}"
+      ETH_PASSWORD: "${ETH_PASSWORD:-shkeeper}"
+      POLYGON_USERNAME: "${POLYGON_USERNAME:-shkeeper}"
+      POLYGON_PASSWORD: "${POLYGON_PASSWORD:-shkeeper}"
+      AVALANCHE_USERNAME: "${AVALANCHE_USERNAME:-shkeeper}"
+      AVALANCHE_PASSWORD: "${AVALANCHE_PASSWORD:-shkeeper}"
+      ARB_USERNAME: "${ARB_USERNAME:-shkeeper}"
+      ARB_PASSWORD: "${ARB_PASSWORD:-shkeeper}"
+      OP_USERNAME: "${OP_USERNAME:-shkeeper}"
+      OP_PASSWORD: "${OP_PASSWORD:-shkeeper}"
+      BNB_USERNAME: "${BNB_USERNAME:-shkeeper}"
+      BNB_PASSWORD: "${BNB_PASSWORD:-shkeeper}"
+
+      # Token modules must set both contract and decimals unless a built-in
+      # default exists. Examples:
+      # ETH_USDT_CONTRACT: "${ETH_USDT_CONTRACT}"
+      # ETH_USDT_DECIMALS: "${ETH_USDT_DECIMALS:-6}"
+      # POLYGON_USDC_CONTRACT: "${POLYGON_USDC_CONTRACT}"
+      # POLYGON_USDC_DECIMALS: "${POLYGON_USDC_DECIMALS:-6}"
+    depends_on:
+      - mariadb
