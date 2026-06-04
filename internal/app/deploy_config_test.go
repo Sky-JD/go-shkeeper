@@ -418,6 +418,7 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 		"contrib/shkeeper-change-password.sh",
 		"Reject SQLite and Python dependencies",
 		"Reject active SQLite and Python source",
+		"deploy/install.sh",
 		"deploy/hk-16-16-staging-rehearsal.sh",
 		"deploy/hk-16-16-production-cutover.sh",
 		"deploy/hk-16-16-final-readiness.sh",
@@ -536,6 +537,10 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 		"install_manager",
 		"MANAGER_BIN",
 		"run_panel",
+		"color_text",
+		"stack_status_key",
+		"colored_stack_status",
+		"print_status_summary",
 		"panel_set_admin_password",
 		"panel_set_api_key",
 		"panel_set_worker_serverkey",
@@ -594,8 +599,14 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 	}
 	readme := string(readmeBody)
 	for _, item := range []string{
+		"deploy/install.sh",
 		"deploy/shkeeperctl.sh",
 		"shkeeperctl",
+		"curl -fsSL https://raw.githubusercontent.com/Sky-JD/go-shkeeper/main/deploy/install.sh",
+		"X-Shkeeper-Api-Key",
+		"/api/v1/USDT/payment_request",
+		"/api/v1/orders",
+		"shkeeperctl status",
 		"bash deploy/shkeeperctl.sh install-manager",
 		"bash deploy/shkeeperctl.sh set-api-key /secure/api_key",
 		"bash deploy/shkeeperctl.sh configure",
@@ -615,6 +626,42 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 	}
 	if !strings.Contains(string(gitignoreBody), "secrets/") {
 		t.Fatalf(".gitignore must exclude shkeeperctl local secret files")
+	}
+}
+
+func TestOneClickInstallScriptClonesAndRunsShkeeperctl(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/install.sh")
+	if err != nil {
+		t.Fatalf("read install script: %v", err)
+	}
+	text := string(body)
+	required := []string{
+		"#!/usr/bin/env bash",
+		"GO_SHKEEPER_REPO",
+		"GO_SHKEEPER_DIR",
+		"GO_SHKEEPER_REF",
+		"https://github.com/Sky-JD/go-shkeeper.git",
+		"git clone",
+		"docker compose version",
+		"bash deploy/shkeeperctl.sh install",
+	}
+	for _, item := range required {
+		if !strings.Contains(text, item) {
+			t.Fatalf("install script is missing %q", item)
+		}
+	}
+	forbidden := []string{
+		"python",
+		"sqlite://",
+		"sqlite3",
+		"DROP DATABASE",
+		`-e DATABASE_URL=`,
+	}
+	lowered := strings.ToLower(text)
+	for _, item := range forbidden {
+		if strings.Contains(lowered, strings.ToLower(item)) {
+			t.Fatalf("install script must not contain %q", item)
+		}
 	}
 }
 

@@ -27,11 +27,26 @@ die() {
   exit 1
 }
 
+color_enabled() {
+  [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]
+}
+
+color_text() {
+  local code="$1"
+  shift
+  if color_enabled; then
+    printf '\033[%sm%s\033[0m' "$code" "$*"
+  else
+    printf '%s' "$*"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
   shkeeperctl
   bash deploy/shkeeperctl.sh panel
+  bash deploy/install.sh
   bash deploy/shkeeperctl.sh install-manager
   bash deploy/shkeeperctl.sh init
   bash deploy/shkeeperctl.sh configure
@@ -488,6 +503,10 @@ compose() {
   docker compose --env-file "$ENV_FILE" -p "$PROJECT_NAME" "${compose_file_args[@]}" "$@"
 }
 
+docker_compose_available() {
+  command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1
+}
+
 require_env_file() {
   [ -f "$ENV_FILE" ] || die "$ENV_FILE does not exist; run: bash deploy/shkeeperctl.sh init"
 }
@@ -544,6 +563,107 @@ all_worker_services() {
       printf '%s\n' "$service"
     fi
   done
+}
+
+desired_services() {
+  load_services
+  {
+    infra_services
+    main_service
+    services_for_cryptos "$(current_cryptos)"
+  } | awk 'NF && !seen[$0]++'
+}
+
+stack_status_key() {
+  if [ ! -f "$ENV_FILE" ]; then
+    printf '%s' "unconfigured"
+    return
+  fi
+  if ! docker_compose_available; then
+    printf '%s' "docker-missing"
+    return
+  fi
+
+  local desired running_services all_services service
+  local desired_count=0
+  local running_count=0
+  desired="$(desired_services 2>/dev/null || true)"
+  if [ -z "$desired" ]; then
+    printf '%s' "unknown"
+    return
+  fi
+  running_services="$(compose ps --services --filter status=running 2>/dev/null || true)"
+  all_services="$(compose ps --all --services 2>/dev/null || true)"
+
+  while IFS= read -r service; do
+    [ -n "$service" ] || continue
+    desired_count=$((desired_count + 1))
+    if grep -Fxq "$service" <<<"$running_services"; then
+      running_count=$((running_count + 1))
+    fi
+  done <<<"$desired"
+
+  if [ "$desired_count" -gt 0 ] && [ "$running_count" -eq "$desired_count" ]; then
+    printf '%s' "running"
+    return
+  fi
+  if [ "$running_count" -gt 0 ]; then
+    printf '%s' "partial"
+    return
+  fi
+  if [ -n "$all_services" ]; then
+    printf '%s' "stopped"
+    return
+  fi
+  printf '%s' "not-installed"
+}
+
+stack_status_label() {
+  case "$1" in
+    running) printf '%s' "运行中" ;;
+    partial) printf '%s' "部分运行" ;;
+    stopped) printf '%s' "已停止" ;;
+    not-installed) printf '%s' "未安装/未启动" ;;
+    unconfigured) printf '%s' "未配置" ;;
+    docker-missing) printf '%s' "Docker 不可用" ;;
+    *) printf '%s' "未知" ;;
+  esac
+}
+
+colored_stack_status() {
+  local key label
+  key="$(stack_status_key)"
+  label="$(stack_status_label "$key")"
+  case "$key" in
+    running) color_text 32 "$label" ;;
+    partial) color_text 33 "$label" ;;
+    stopped|not-installed|unconfigured|docker-missing) color_text 31 "$label" ;;
+    *) color_text 36 "$label" ;;
+  esac
+}
+
+colored_redacted_state() {
+  local key="$1"
+  local state
+  state="$(redacted_state "$key")"
+  if [ "$state" = "set" ]; then
+    color_text 32 "已设置"
+  else
+    color_text 31 "缺失"
+  fi
+}
+
+print_status_summary() {
+  local host="?"
+  local port="?"
+  local cryptos="?"
+  if [ -f "$ENV_FILE" ]; then
+    host="$(env_get SHKEEPER_HOST || printf '?')"
+    port="$(env_get SHKEEPER_PORT || printf '?')"
+    cryptos="$(current_cryptos 2>/dev/null || printf '?')"
+  fi
+  printf 'SHKeeper 状态: %s\n' "$(colored_stack_status)"
+  printf '配置: %s:%s  币种: %s\n' "$host" "$port" "$cryptos"
 }
 
 default_compose_cryptos() {
@@ -835,6 +955,7 @@ show_cryptos() {
 show_config() {
   INTERACTIVE=0 init_env
   cat <<EOF
+status=$(stack_status_label "$(stack_status_key)")
 root_dir=$ROOT_DIR
 env_file=$ENV_FILE
 compose_files=$COMPOSE_FILES_RAW
@@ -1036,7 +1157,8 @@ run_panel() {
   local choice value
   while true; do
     printf '\nGo SHKeeper 管理面板\n'
-    printf '配置: %s:%s  币种: %s\n' "$(env_get SHKEEPER_HOST || printf '?')" "$(env_get SHKEEPER_PORT || printf '?')" "$(current_cryptos 2>/dev/null || printf '?')"
+    print_status_summary
+    printf '密钥: API=%s  Cookie=%s  Backend=%s  MariaDB=%s\n' "$(colored_redacted_state SUGGESTED_WALLET_APIKEY)" "$(colored_redacted_state SECRET_KEY)" "$(colored_redacted_state SHKEEPER_BACKEND_KEY)" "$(colored_redacted_state MARIADB_DATABASE_URL)"
     cat <<'EOF'
   1) 安装/启动
   2) 更新并重启
@@ -1065,7 +1187,7 @@ EOF
       2) upgrade_stack; panel_pause ;;
       3) require_env_file; compose stop; panel_pause ;;
       4) panel_uninstall; panel_pause ;;
-      5) require_env_file; compose ps; panel_pause ;;
+      5) print_status_summary; require_env_file; compose ps; panel_pause ;;
       6) require_env_file; compose logs -f ;;
       7) configure_stack; panel_pause ;;
       8) value="$(panel_prompt "启用币种/网络")"; value="$(selection_to_cryptos "$value" "")"; enable_crypto "$value"; panel_pause ;;
@@ -1124,7 +1246,7 @@ case "$cmd" in
   start) start_selected ;;
   stop) require_env_file; compose stop "$@" ;;
   restart) require_env_file; start_selected; restart_main ;;
-  status|ps) require_env_file; compose ps ;;
+  status|ps) print_status_summary; require_env_file; compose ps ;;
   logs) require_env_file; compose logs -f "$@" ;;
   build) compose_build_selected ;;
   show-config) show_config ;;

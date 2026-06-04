@@ -117,7 +117,7 @@ jobs:
 
       - name: Reject active SQLite and Python source
         run: |
-          scan_files="contrib/shkeeper-change-password.sh Dockerfile docker-compose.example.yml deploy/shkeeperctl.sh deploy/hk-16-16-staging-rehearsal.sh deploy/hk-16-16-production-cutover.sh deploy/hk-16-16-final-readiness.sh deploy/hk-16-16-async-final-readiness.sh deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml"
+          scan_files="contrib/shkeeper-change-password.sh Dockerfile docker-compose.example.yml deploy/install.sh deploy/shkeeperctl.sh deploy/hk-16-16-staging-rehearsal.sh deploy/hk-16-16-production-cutover.sh deploy/hk-16-16-final-readiness.sh deploy/hk-16-16-async-final-readiness.sh deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml"
           matches="$(grep -nE '(^|[[:space:];|&])(python|python3|pip|pip3|sqlite3)([[:space:];|&]|$)|sqlite://|shkeeper\.sqlite|requirements\.txt' $scan_files || true)"
           if [ -n "$matches" ]; then
             echo "$matches"
