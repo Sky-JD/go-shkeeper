@@ -227,7 +227,7 @@ jobs:
 
           docker run --rm --network host mariadb:11.4 mariadb \
             -h127.0.0.1 -ushkeeper -pshkeeper go_shkeeper_test \
-            -e "UPDATE wallet SET apikey = 'ci-api-key'; UPDATE exchange_rate SET source = 'manual', rate = 10000, fee = 0, fixed_fee = 0, fee_policy = 'PERCENT_FEE' WHERE crypto = 'BTC' AND fiat = 'USD'; INSERT INTO invoice (crypto, addr, external_id, fiat, callback_url, balance_fiat, balance_crypto, amount_fiat, amount_crypto, exchange_rate, status) VALUES ('BTC', 'ci-btc-address', 'ci-unpaid-order', 'USD', 'https://example.invalid/callback', 0, 0, 10, 0.001, 10000, 'UNPAID');"
+            -e "UPDATE wallet SET apikey = 'ci-api-key'; UPDATE exchange_rate SET source = 'manual', rate = 10000, fee = 0, fixed_fee = 0, fee_policy = 'PERCENT_FEE' WHERE crypto = 'BTC' AND fiat = 'USD'; INSERT INTO invoice (crypto, addr, external_id, fiat, callback_url, balance_fiat, balance_crypto, amount_fiat, amount_crypto, exchange_rate, status) VALUES ('BTC', 'ci-btc-address', 'ci-unpaid-order', 'USD', 'https://example.invalid/callback', 0, 0, 10, 0.001, 10000, 'UNPAID'); INSERT INTO order_index (external_id, sort_at) SELECT external_id, updated_at FROM invoice WHERE external_id = 'ci-unpaid-order' ON DUPLICATE KEY UPDATE sort_at = VALUES(sort_at);"
 
           curl -fsS -H "X-Shkeeper-Api-Key: ci-api-key" \
             http://127.0.0.1:5000/api/v1/orders/ci-unpaid-order >/tmp/go-shkeeper-order.json
