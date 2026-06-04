@@ -533,6 +533,17 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 	text := string(body)
 	required := []string{
 		"#!/usr/bin/env bash",
+		"install_manager",
+		"MANAGER_BIN",
+		"run_panel",
+		"panel_set_admin_password",
+		"panel_set_api_key",
+		"panel_set_worker_serverkey",
+		"set-api-key",
+		"set-secret-key",
+		"set-backend-key",
+		"show-config",
+		"SHKEEPER_SECRET_DIR",
 		"configure_wizard",
 		"configure_stack",
 		"SHKEEPER_INTERACTIVE",
@@ -584,6 +595,9 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 	readme := string(readmeBody)
 	for _, item := range []string{
 		"deploy/shkeeperctl.sh",
+		"shkeeperctl",
+		"bash deploy/shkeeperctl.sh install-manager",
+		"bash deploy/shkeeperctl.sh set-api-key /secure/api_key",
 		"bash deploy/shkeeperctl.sh configure",
 		"SHKEEPER_HOST=0.0.0.0 SHKEEPER_PORT=8080",
 		"enable-crypto TRX USDT BNB-USDT",
@@ -593,6 +607,14 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 		if !strings.Contains(readme, item) {
 			t.Fatalf("README is missing shkeeperctl marker %q", item)
 		}
+	}
+
+	gitignoreBody, err := os.ReadFile("../../.gitignore")
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignoreBody), "secrets/") {
+		t.Fatalf(".gitignore must exclude shkeeperctl local secret files")
 	}
 }
 

@@ -11,6 +11,8 @@ DOCKER_NETWORK="${SHKEEPER_DOCKER_NETWORK:-${PROJECT_NAME}_default}"
 INIT_CRYPTOS="${SHKEEPER_INIT_CRYPTOS:-${SHKEEPER_CRYPTOS:-BTC}}"
 DRY_RUN="${SHKEEPER_DRY_RUN:-0}"
 INTERACTIVE="${SHKEEPER_INTERACTIVE:-auto}"
+MANAGER_BIN="${SHKEEPERCTL_BIN:-/usr/local/bin/shkeeperctl}"
+SECRET_DIR="${SHKEEPER_SECRET_DIR:-$ROOT_DIR/secrets}"
 SERVICE_LIST=""
 
 export GO_SHKEEPER_IMAGE="$IMAGE"
@@ -28,6 +30,9 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
+  shkeeperctl
+  bash deploy/shkeeperctl.sh panel
+  bash deploy/shkeeperctl.sh install-manager
   bash deploy/shkeeperctl.sh init
   bash deploy/shkeeperctl.sh configure
   bash deploy/shkeeperctl.sh install
@@ -39,6 +44,10 @@ Usage:
   bash deploy/shkeeperctl.sh set-cryptos BTC,TRX,USDT
   bash deploy/shkeeperctl.sh enable-crypto TRX USDT
   bash deploy/shkeeperctl.sh disable-crypto BTC-LIGHTNING
+  bash deploy/shkeeperctl.sh show-config
+  bash deploy/shkeeperctl.sh set-api-key /secure/api_key
+  bash deploy/shkeeperctl.sh set-secret-key /secure/secret_key
+  bash deploy/shkeeperctl.sh set-backend-key /secure/backend_key
   bash deploy/shkeeperctl.sh admin-password admin /secure/admin_password
   bash deploy/shkeeperctl.sh worker-serverkey BNB,BNB-USDT worker /secure/worker_password
   bash deploy/shkeeperctl.sh debug
@@ -50,6 +59,8 @@ Environment:
   SHKEEPER_COMPOSE_FILES    Comma-separated compose files; overrides SHKEEPER_COMPOSE_FILE
   SHKEEPER_PROJECT_NAME     Default: go-shkeeper
   GO_SHKEEPER_IMAGE         Default: go-shkeeper:local
+  SHKEEPERCTL_BIN           Default: /usr/local/bin/shkeeperctl
+  SHKEEPER_SECRET_DIR       Default: ./secrets
   SHKEEPER_INIT_CRYPTOS     Default: BTC
   SHKEEPER_HOST             Default: 127.0.0.1
   SHKEEPER_PORT             Default: 5000
@@ -391,6 +402,62 @@ rand_hex() {
   dd if=/dev/urandom bs="$bytes" count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
 }
 
+read_secret_file() {
+  local file="$1"
+  [ -f "$file" ] || die "secret file does not exist: $file"
+  tr -d '\r\n' <"$file"
+}
+
+prompt_secret_to_file() {
+  local label="$1"
+  local file="$2"
+  local first second
+  mkdir -p "$(dirname "$file")"
+  while true; do
+    printf '%s: ' "$label" >&2
+    IFS= read -r -s first
+    printf '\n' >&2
+    printf '再次输入%s: ' "$label" >&2
+    IFS= read -r -s second
+    printf '\n' >&2
+    if [ -z "$first" ]; then
+      printf '不能为空。\n' >&2
+      continue
+    fi
+    if [ "$first" != "$second" ]; then
+      printf '两次输入不一致。\n' >&2
+      continue
+    fi
+    umask 077
+    printf '%s' "$first" >"$file"
+    chmod 600 "$file"
+    printf '%s' "$file"
+    return
+  done
+}
+
+set_env_secret_file() {
+  [ "$#" -eq 2 ] || die "set-env-secret requires: <env-key> <secret-file>"
+  local key="$1"
+  local file="$2"
+  local value
+  value="$(read_secret_file "$file")"
+  [ -n "$value" ] || die "$file is empty"
+  env_set "$key" "$value"
+  log "updated $key in $ENV_FILE"
+}
+
+redacted_state() {
+  local key="$1"
+  local value
+  value="$(env_get "$key" || true)"
+  if [ -n "$value" ]; then
+    printf 'set'
+  else
+    printf 'missing'
+  fi
+}
+
 compose_file_paths=()
 compose_file_args=()
 IFS=',' read -r -a raw_compose_files <<<"$COMPOSE_FILES_RAW"
@@ -648,6 +715,34 @@ configure_stack() {
   init_env
 }
 
+install_manager() {
+  local mode="${1:-optional}"
+  local bin="$MANAGER_BIN"
+  local bindir
+  bindir="$(dirname "$bin")"
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '[shkeeperctl] dry-run: install manager wrapper at %q\n' "$bin"
+    return 0
+  fi
+  if ! mkdir -p "$bindir" >/dev/null 2>&1; then
+    [ "$mode" = "required" ] && die "cannot create $bindir; run as root or set SHKEEPERCTL_BIN"
+    log "cannot create $bindir; skip manager shortcut"
+    return 0
+  fi
+  if ! cat >"$bin" <<EOF
+#!/usr/bin/env bash
+cd "$ROOT_DIR"
+exec bash "$ROOT_DIR/deploy/shkeeperctl.sh" "\$@"
+EOF
+  then
+    [ "$mode" = "required" ] && die "cannot write $bin; run as root or set SHKEEPERCTL_BIN"
+    log "cannot write $bin; skip manager shortcut"
+    return 0
+  fi
+  chmod 0755 "$bin"
+  log "installed manager shortcut: $bin"
+}
+
 compose_build_selected() {
   require_env_file
   local cryptos main
@@ -701,6 +796,9 @@ stop_unused_workers() {
 
 install_stack() {
   init_env
+  if [ "${SHKEEPER_INSTALL_MANAGER:-1}" != "0" ]; then
+    install_manager optional
+  fi
   compose_build_selected
   start_selected
 }
@@ -732,6 +830,25 @@ uninstall_stack() {
 
 show_cryptos() {
   printf '%s\n' "$(current_cryptos)"
+}
+
+show_config() {
+  INTERACTIVE=0 init_env
+  cat <<EOF
+root_dir=$ROOT_DIR
+env_file=$ENV_FILE
+compose_files=$COMPOSE_FILES_RAW
+project=$PROJECT_NAME
+image=$IMAGE
+manager_bin=$MANAGER_BIN
+host=$(env_get SHKEEPER_HOST || true)
+port=$(env_get SHKEEPER_PORT || true)
+cryptos=$(current_cryptos)
+SECRET_KEY=$(redacted_state SECRET_KEY)
+SHKEEPER_BACKEND_KEY=$(redacted_state SHKEEPER_BACKEND_KEY)
+SUGGESTED_WALLET_APIKEY=$(redacted_state SUGGESTED_WALLET_APIKEY)
+MARIADB_DATABASE_URL=$(redacted_state MARIADB_DATABASE_URL)
+EOF
 }
 
 list_cryptos() {
@@ -777,6 +894,21 @@ disable_crypto() {
   stop_unused_workers "$next"
   restart_main
   log "enabled cryptos: $next"
+}
+
+set_api_key() {
+  [ "$#" -eq 1 ] || die "set-api-key requires: <api-key-file>"
+  set_env_secret_file SUGGESTED_WALLET_APIKEY "$1"
+}
+
+set_secret_key() {
+  [ "$#" -eq 1 ] || die "set-secret-key requires: <secret-key-file>"
+  set_env_secret_file SECRET_KEY "$1"
+}
+
+set_backend_key() {
+  [ "$#" -eq 1 ] || die "set-backend-key requires: <backend-key-file>"
+  set_env_secret_file SHKEEPER_BACKEND_KEY "$1"
 }
 
 mariadb_url() {
@@ -831,6 +963,128 @@ worker_serverkey() {
     "$IMAGE" /app/worker-serverkey
 }
 
+panel_pause() {
+  printf '\n按回车继续...' >&2
+  IFS= read -r _ || true
+}
+
+panel_prompt() {
+  local label="$1"
+  local default="${2:-}"
+  local value
+  if [ -n "$default" ]; then
+    printf '%s [%s]: ' "$label" "$default" >&2
+  else
+    printf '%s: ' "$label" >&2
+  fi
+  IFS= read -r value
+  value="$(trim "$value")"
+  if [ -z "$value" ]; then
+    value="$default"
+  fi
+  printf '%s' "$value"
+}
+
+panel_set_admin_password() {
+  local username file
+  username="$(panel_prompt "管理员用户名" "admin")"
+  file="$(prompt_secret_to_file "管理员密码" "$SECRET_DIR/admin_password")"
+  admin_password "$username" "$file"
+}
+
+panel_set_api_key() {
+  local file
+  file="$(prompt_secret_to_file "钱包 API Key" "$SECRET_DIR/api_key")"
+  set_api_key "$file"
+}
+
+panel_set_secret_key() {
+  local file
+  file="$(prompt_secret_to_file "Cookie SECRET_KEY" "$SECRET_DIR/secret_key")"
+  set_secret_key "$file"
+}
+
+panel_set_backend_key() {
+  local file
+  file="$(prompt_secret_to_file "Backend Key" "$SECRET_DIR/backend_key")"
+  set_backend_key "$file"
+}
+
+panel_set_worker_serverkey() {
+  local cryptos username file default_cryptos
+  default_cryptos="$(current_cryptos)"
+  cryptos="$(panel_prompt "写入 worker serverkey 的币种" "$default_cryptos")"
+  username="$(panel_prompt "worker 用户名" "worker")"
+  file="$(prompt_secret_to_file "worker 密码" "$SECRET_DIR/worker_password")"
+  worker_serverkey "$cryptos" "$username" "$file"
+}
+
+panel_uninstall() {
+  local confirm purge
+  confirm="$(panel_prompt "输入 GO_SHKEEPER 确认卸载" "")"
+  [ "$confirm" = "GO_SHKEEPER" ] || die "uninstall cancelled"
+  purge="$(panel_prompt "是否同时删除数据卷？输入 DELETE_GO_SHKEEPER_DATA 删除，直接回车保留" "")"
+  if [ "$purge" = "DELETE_GO_SHKEEPER_DATA" ]; then
+    CONFIRM_UNINSTALL=GO_SHKEEPER PURGE_DATA=1 CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA uninstall_stack
+  else
+    CONFIRM_UNINSTALL=GO_SHKEEPER uninstall_stack
+  fi
+}
+
+run_panel() {
+  is_interactive || die "panel requires an interactive terminal"
+  local choice value
+  while true; do
+    printf '\nGo SHKeeper 管理面板\n'
+    printf '配置: %s:%s  币种: %s\n' "$(env_get SHKEEPER_HOST || printf '?')" "$(env_get SHKEEPER_PORT || printf '?')" "$(current_cryptos 2>/dev/null || printf '?')"
+    cat <<'EOF'
+  1) 安装/启动
+  2) 更新并重启
+  3) 停止
+  4) 卸载
+  5) 状态
+  6) 日志
+  7) 配置 IP/端口/币种
+  8) 启用币种
+  9) 禁用币种
+ 10) 设置管理员账号密码
+ 11) 设置钱包 API Key
+ 12) 设置 Cookie SECRET_KEY
+ 13) 设置 Backend Key
+ 14) 写入 worker serverkey
+ 15) 显示配置摘要
+ 16) 安装/刷新 shkeeperctl 短命令
+ 17) Docker debug
+ 18) Final readiness
+  0) 退出
+EOF
+    printf '选择: ' >&2
+    IFS= read -r choice
+    case "$(trim "$choice")" in
+      1) install_stack; panel_pause ;;
+      2) upgrade_stack; panel_pause ;;
+      3) require_env_file; compose stop; panel_pause ;;
+      4) panel_uninstall; panel_pause ;;
+      5) require_env_file; compose ps; panel_pause ;;
+      6) require_env_file; compose logs -f ;;
+      7) configure_stack; panel_pause ;;
+      8) value="$(panel_prompt "启用币种/网络")"; value="$(selection_to_cryptos "$value" "")"; enable_crypto "$value"; panel_pause ;;
+      9) value="$(panel_prompt "禁用币种/网络")"; value="$(selection_to_cryptos "$value" "")"; disable_crypto "$value"; panel_pause ;;
+      10) panel_set_admin_password; panel_pause ;;
+      11) panel_set_api_key; panel_pause ;;
+      12) panel_set_secret_key; panel_pause ;;
+      13) panel_set_backend_key; panel_pause ;;
+      14) panel_set_worker_serverkey; panel_pause ;;
+      15) show_config; panel_pause ;;
+      16) install_manager required; panel_pause ;;
+      17) run_debug; panel_pause ;;
+      18) run_readiness; panel_pause ;;
+      0) return 0 ;;
+      *) printf '未知选项。\n' >&2; panel_pause ;;
+    esac
+  done
+}
+
 run_debug() {
   if [ "$DRY_RUN" = "1" ]; then
     printf '[shkeeperctl] dry-run: GO_SHKEEPER_IMAGE=%q bash %q\n' "$IMAGE" "$ROOT_DIR/deploy/hk-docker-debug.sh"
@@ -847,13 +1101,21 @@ run_readiness() {
   GO_SHKEEPER_IMAGE="$IMAGE" bash "$ROOT_DIR/deploy/hk-16-16-final-readiness.sh"
 }
 
-cmd="${1:-help}"
-if [ "$#" -gt 0 ]; then
+if [ "$#" -eq 0 ]; then
+  if is_interactive; then
+    cmd="panel"
+  else
+    cmd="help"
+  fi
+else
+  cmd="$1"
   shift
 fi
 
 case "$cmd" in
   help|-h|--help) usage ;;
+  panel|menu) run_panel ;;
+  install-manager) install_manager required ;;
   init) init_env ;;
   configure) configure_stack ;;
   install) install_stack ;;
@@ -865,11 +1127,15 @@ case "$cmd" in
   status|ps) require_env_file; compose ps ;;
   logs) require_env_file; compose logs -f "$@" ;;
   build) compose_build_selected ;;
+  show-config) show_config ;;
   show-cryptos) show_cryptos ;;
   list-cryptos) list_cryptos ;;
   set-cryptos) set_cryptos "$@" ;;
   enable-crypto) enable_crypto "$@" ;;
   disable-crypto) disable_crypto "$@" ;;
+  set-api-key) set_api_key "$@" ;;
+  set-secret-key) set_secret_key "$@" ;;
+  set-backend-key) set_backend_key "$@" ;;
   admin-password) admin_password "$@" ;;
   worker-serverkey) worker_serverkey "$@" ;;
   debug) run_debug ;;

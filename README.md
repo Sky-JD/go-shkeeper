@@ -55,6 +55,7 @@ Use [deploy/shkeeperctl.sh](deploy/shkeeperctl.sh) as the daily Docker entrypoin
 ```bash
 cd /root/go-shkeeper
 bash deploy/shkeeperctl.sh install
+shkeeperctl
 bash deploy/shkeeperctl.sh configure
 bash deploy/shkeeperctl.sh enable-crypto TRX USDT BNB-USDT
 bash deploy/shkeeperctl.sh disable-crypto BTC-LIGHTNING
@@ -77,11 +78,18 @@ SHKEEPER_HOST=0.0.0.0 SHKEEPER_PORT=8080 SHKEEPER_INIT_CRYPTOS=TRX,USDT,BNB-USDT
 Admin and worker credential helpers accept password files only:
 
 ```bash
+bash deploy/shkeeperctl.sh install-manager
+bash deploy/shkeeperctl.sh show-config
+bash deploy/shkeeperctl.sh set-api-key /secure/api_key
+bash deploy/shkeeperctl.sh set-secret-key /secure/secret_key
+bash deploy/shkeeperctl.sh set-backend-key /secure/backend_key
 bash deploy/shkeeperctl.sh admin-password admin /secure/admin_password
 bash deploy/shkeeperctl.sh worker-serverkey BNB,BNB-USDT worker /secure/worker_password
 ```
 
 Set `SHKEEPER_DRY_RUN=1` to print Docker/Git actions while still validating and updating the local `.env` crypto configuration.
+
+`install` installs `/usr/local/bin/shkeeperctl` when permissions allow it. Running `shkeeperctl` without arguments opens the management panel for install, update, uninstall, status, logs, crypto selection, admin password, wallet API key, backend key, and worker serverkey actions. The panel writes typed secrets to local `secrets/` files with `0600` permissions before passing them to the Go CLIs.
 
 ## Deployment Check
 
