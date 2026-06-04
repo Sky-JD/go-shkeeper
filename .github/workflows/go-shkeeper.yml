@@ -535,8 +535,10 @@ jobs:
               *_URL|FULLNODE_URL|*_FULLNODE_URL|*_RPC_URL|LND_REST_URL|LNBITS_URL) value=http://example.invalid ;;
               *_CONTRACT|*_MINT|*_TOKEN_PROGRAM|*_ADDRESS) value=0x0000000000000000000000000000000000000000 ;;
               *_TLS_SKIP_VERIFY) value=false ;;
-              *_TOKEN_MIN_FEE_SOL) value=0.001 ;;
-              SHKEEPER_CRYPTOS) value=BTC ;;
+    *_TOKEN_MIN_FEE_SOL) value=0.001 ;;
+    SHKEEPER_HOST) value=127.0.0.1 ;;
+    SHKEEPER_PORT) value=5000 ;;
+    SHKEEPER_CRYPTOS) value=BTC ;;
               *) value=ci-placeholder ;;
             esac
             printf '%s=%s\n' "$name" "$value"
