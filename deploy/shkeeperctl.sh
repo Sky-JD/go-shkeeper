@@ -163,7 +163,8 @@ wallet_env_for_crypto() {
 
 evm_network_for_crypto() {
   case "$(normalize_crypto "$1")" in
-    BNB|BNB-USDT|BNB-USDC) printf '%s\n' "BNB" ;;
+    # BNB is already part of the default compose file. Do not generate a new
+    # account password for existing BNB deployments during read-only commands.
     ETH|ETH-USDT|ETH-USDC|ETH-PYUSD) printf '%s\n' "ETH" ;;
     MATIC|POLYGON-USDT|POLYGON-USDC) printf '%s\n' "POLYGON" ;;
     AVAX|AVALANCHE-USDT|AVALANCHE-USDC) printf '%s\n' "AVALANCHE" ;;
