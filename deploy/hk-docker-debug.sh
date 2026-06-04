@@ -19,6 +19,7 @@ MYSQL_PASSWORD="${MYSQL_PASSWORD:-shkeeper}"
 MARIADB_DATABASE_URL="mariadb://$MYSQL_USER:$MYSQL_PASSWORD@$DB:3306/$MYSQL_DATABASE"
 
 mkdir -p "$REPORT_DIR"
+chmod 0777 "$REPORT_DIR"
 
 cleanup() {
   set +e
