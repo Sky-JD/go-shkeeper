@@ -24,6 +24,8 @@ bash deploy/shkeeperctl.sh upgrade
 
 `install` installs `/usr/local/bin/shkeeperctl` when permissions allow it. Running `shkeeperctl` without arguments opens a management panel for install, update, uninstall, status, logs, crypto selection, admin password, wallet API key, backend key, and worker serverkey actions. Password and key input in the panel is displayed plainly so operators can confirm what they typed. Direct commands remain available, for example `shkeeperctl set-api-key /secure/api_key`, `shkeeperctl admin-password admin /secure/admin_password`, and `shkeeperctl worker-serverkey BNB,BNB-USDT worker /secure/worker_password`.
 
+The one-shot `admin-password` and `worker-serverkey` helpers run their temporary compose containers as `SHKEEPER_UTILITY_DOCKER_USER`, default `0:0`, so they can read local `0600` secret files mounted into `/run/secrets`. The long-running SHKeeper service image still runs as the non-root `shkeeper` user.
+
 For the hk modular compose file, pass `SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml`. `SHKEEPER_DRY_RUN=1` prints Docker/Git actions while still validating and updating the local `.env` crypto configuration. `uninstall` is guarded with `CONFIRM_UNINSTALL=GO_SHKEEPER`, and data volume removal additionally requires `PURGE_DATA=1 CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA`.
 
 After starting a candidate stack, run the Go-native verifier from the image. It checks main `/healthz`, main `/readyz`, optional complete order lookup, optional worker `/healthz` and `/readyz`, and optional authenticated worker/admin probes:

@@ -13,6 +13,7 @@ DRY_RUN="${SHKEEPER_DRY_RUN:-0}"
 INTERACTIVE="${SHKEEPER_INTERACTIVE:-auto}"
 MANAGER_BIN="${SHKEEPERCTL_BIN:-/usr/local/bin/shkeeperctl}"
 SECRET_DIR="${SHKEEPER_SECRET_DIR:-$ROOT_DIR/secrets}"
+UTILITY_DOCKER_USER="${SHKEEPER_UTILITY_DOCKER_USER:-0:0}"
 SERVICE_LIST=""
 
 export GO_SHKEEPER_IMAGE="$IMAGE"
@@ -76,6 +77,7 @@ Environment:
   GO_SHKEEPER_IMAGE         Default: go-shkeeper:local
   SHKEEPERCTL_BIN           Default: /usr/local/bin/shkeeperctl
   SHKEEPER_SECRET_DIR       Default: ./secrets
+  SHKEEPER_UTILITY_DOCKER_USER Default: 0:0 for one-shot admin CLIs
   SHKEEPER_INIT_CRYPTOS     Default: BTC
   SHKEEPER_HOST             Default: 127.0.0.1
   SHKEEPER_PORT             Default: 5000
@@ -1047,10 +1049,10 @@ admin_password() {
   mkdir -p "$REPORT_DIR"
   service="$(main_service)"
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[shkeeperctl] dry-run: docker compose run --rm --no-deps -e MARIADB_DATABASE_URL=*** -e ADMIN_USERNAME=%q -e ADMIN_PASSWORD_FILE=/run/secrets/admin_password -v %q:/run/secrets/admin_password:ro -v %q:/deploy-reports %q /app/admin-account\n' "$username" "$password_file" "$REPORT_DIR" "$service"
+    printf '[shkeeperctl] dry-run: docker compose run --rm --no-deps --user %q -e MARIADB_DATABASE_URL=*** -e ADMIN_USERNAME=%q -e ADMIN_PASSWORD_FILE=/run/secrets/admin_password -v %q:/run/secrets/admin_password:ro -v %q:/deploy-reports %q /app/admin-account\n' "$UTILITY_DOCKER_USER" "$username" "$password_file" "$REPORT_DIR" "$service"
     return 0
   fi
-  compose run --rm --no-deps \
+  compose run --rm --no-deps --user "$UTILITY_DOCKER_USER" \
     -e MARIADB_DATABASE_URL="$(mariadb_url)" \
     -e ADMIN_USERNAME="$username" \
     -e ADMIN_PASSWORD_FILE=/run/secrets/admin_password \
@@ -1072,10 +1074,10 @@ worker_serverkey() {
   mkdir -p "$REPORT_DIR"
   service="$(main_service)"
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[shkeeperctl] dry-run: docker compose run --rm --no-deps -e MARIADB_DATABASE_URL=*** -e WORKER_SERVERKEY_CRYPTOS=%q -e WORKER_USERNAME=%q -e WORKER_PASSWORD_FILE=/run/secrets/worker_password -v %q:/run/secrets/worker_password:ro -v %q:/deploy-reports %q /app/worker-serverkey\n' "$(normalize_crypto_list "$cryptos")" "$username" "$password_file" "$REPORT_DIR" "$service"
+    printf '[shkeeperctl] dry-run: docker compose run --rm --no-deps --user %q -e MARIADB_DATABASE_URL=*** -e WORKER_SERVERKEY_CRYPTOS=%q -e WORKER_USERNAME=%q -e WORKER_PASSWORD_FILE=/run/secrets/worker_password -v %q:/run/secrets/worker_password:ro -v %q:/deploy-reports %q /app/worker-serverkey\n' "$UTILITY_DOCKER_USER" "$(normalize_crypto_list "$cryptos")" "$username" "$password_file" "$REPORT_DIR" "$service"
     return 0
   fi
-  compose run --rm --no-deps \
+  compose run --rm --no-deps --user "$UTILITY_DOCKER_USER" \
     -e MARIADB_DATABASE_URL="$(mariadb_url)" \
     -e WORKER_SERVERKEY_CRYPTOS="$(normalize_crypto_list "$cryptos")" \
     -e WORKER_USERNAME="$username" \
