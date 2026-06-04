@@ -543,6 +543,8 @@ func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
 		"stack_status_key",
 		"colored_stack_status",
 		"print_status_summary",
+		"missing_worker_services_for_cryptos",
+		"require_worker_services_available",
 		"panel_set_admin_password",
 		"panel_set_api_key",
 		"panel_set_worker_serverkey",

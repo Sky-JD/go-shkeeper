@@ -364,6 +364,7 @@ configure_wizard() {
   printf '\n选择启用的币种/网络 [%s]: ' "$default_cryptos"
   IFS= read -r selection
   cryptos="$(selection_to_cryptos "$selection" "$default_cryptos")"
+  require_worker_services_available "$cryptos"
 
   env_set SHKEEPER_HOST "$host"
   env_set SHKEEPER_PORT "$port"
@@ -557,6 +558,27 @@ services_for_cryptos() {
   done
 }
 
+missing_worker_services_for_cryptos() {
+  local crypto worker
+  local -A seen=()
+  load_services
+  for crypto in $(split_crypto_lines "$@"); do
+    worker="$(worker_for_crypto "$crypto" || true)"
+    if [ -n "$worker" ] && ! service_exists "$worker" && [ -z "${seen[$crypto:$worker]+x}" ]; then
+      seen[$crypto:$worker]=1
+      printf '%s:%s\n' "$crypto" "$worker"
+    fi
+  done
+}
+
+require_worker_services_available() {
+  local missing
+  missing="$(missing_worker_services_for_cryptos "$@" || true)"
+  [ -z "$missing" ] && return 0
+  printf '%s\n' "$missing" >&2
+  die "current compose files do not define every required worker service; use SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml or choose only supported cryptos"
+}
+
 all_worker_services() {
   all_known_cryptos | awk '{print $2}' | sort -u | while read -r service; do
     if service_exists "$service"; then
@@ -657,13 +679,18 @@ print_status_summary() {
   local host="?"
   local port="?"
   local cryptos="?"
+  local missing=""
   if [ -f "$ENV_FILE" ]; then
     host="$(env_get SHKEEPER_HOST || printf '?')"
     port="$(env_get SHKEEPER_PORT || printf '?')"
     cryptos="$(current_cryptos 2>/dev/null || printf '?')"
+    missing="$(missing_worker_services_for_cryptos "$cryptos" 2>/dev/null || true)"
   fi
   printf 'SHKeeper 状态: %s\n' "$(colored_stack_status)"
   printf '配置: %s:%s  币种: %s\n' "$host" "$port" "$cryptos"
+  if [ -n "$missing" ]; then
+    printf '缺失 worker: %s\n' "$(color_text 31 "$(printf '%s' "$missing" | paste -sd ',' -)")"
+  fi
 }
 
 default_compose_cryptos() {
@@ -982,6 +1009,7 @@ set_cryptos() {
   local cryptos
   cryptos="$(normalize_crypto_list "$@")"
   validate_cryptos "$cryptos"
+  require_worker_services_available "$cryptos"
   write_cryptos "$cryptos"
   set_wallet_envs enabled "$cryptos"
   stop_unused_workers "$cryptos"
@@ -996,6 +1024,7 @@ enable_crypto() {
   local current next
   current="$(current_cryptos)"
   next="$(normalize_crypto_list "$current" "$@")"
+  require_worker_services_available "$next"
   write_cryptos "$next"
   set_wallet_envs enabled "$@"
   start_selected

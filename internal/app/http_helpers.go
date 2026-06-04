@@ -205,7 +205,7 @@ button{border:0;border-radius:6px;background:#111827;color:#fff;padding:10px 16p
 button.secondary{background:#2563eb}
 table{width:100%%;border-collapse:collapse}
 th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:10px;font-size:14px}
-.muted{color:#6b7280}.err{color:#b91c1c}.ok{color:#047857}
+.muted{color:#6b7280}.err{color:#b91c1c}.ok{color:#047857}.warn{color:#b45309}
 </style>
 </head>
 <body><main class="shell">%s</main></body></html>`, html.EscapeString(title), body)

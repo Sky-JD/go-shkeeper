@@ -101,11 +101,44 @@ func (h *HTTPHandler) wallets(w http.ResponseWriter, r *http.Request) {
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(apiState))
 		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(status))
-		b.WriteString(`</td></tr>`)
+		b.WriteString(`<span class="` + walletStatusClass(status) + `">`)
+		b.WriteString(html.EscapeString(walletStatusLabel(status)))
+		b.WriteString(`</span></td></tr>`)
 	}
 	b.WriteString(`</tbody></table></section>`)
 	page(w, "钱包", b.String())
+}
+
+func walletStatusLabel(status string) string {
+	status = strings.TrimSpace(status)
+	switch {
+	case strings.EqualFold(status, "Synced"):
+		return "已同步"
+	case strings.EqualFold(status, "Offline"):
+		return "离线"
+	case strings.HasPrefix(status, "Sync In Progress (") && strings.HasSuffix(status, ")"):
+		detail := strings.TrimSuffix(strings.TrimPrefix(status, "Sync In Progress ("), ")")
+		detail = strings.ReplaceAll(detail, " blocks behind", " 个区块落后")
+		return "同步中 (" + detail + ")"
+	case strings.HasPrefix(status, "Sync In Progress"):
+		return strings.Replace(status, "Sync In Progress", "同步中", 1)
+	default:
+		return status
+	}
+}
+
+func walletStatusClass(status string) string {
+	status = strings.TrimSpace(status)
+	switch {
+	case strings.EqualFold(status, "Synced"):
+		return "ok"
+	case strings.EqualFold(status, "Offline"):
+		return "err"
+	case strings.HasPrefix(status, "Sync In Progress"):
+		return "warn"
+	default:
+		return "muted"
+	}
 }
 
 func (h *HTTPHandler) settingsGet(w http.ResponseWriter, r *http.Request) {

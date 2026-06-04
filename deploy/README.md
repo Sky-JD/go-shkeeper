@@ -28,6 +28,8 @@ The one-shot `admin-password` and `worker-serverkey` helpers run their temporary
 
 For the hk modular compose file, pass `SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml`. `SHKEEPER_DRY_RUN=1` prints Docker/Git actions while still validating and updating the local `.env` crypto configuration. `uninstall` is guarded with `CONFIRM_UNINSTALL=GO_SHKEEPER`, and data volume removal additionally requires `PURGE_DATA=1 CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA`.
 
+The default `docker-compose.example.yml` does not define the EVM worker services `eth-worker`, `polygon-worker`, `avalanche-worker`, `arbitrum-worker`, or `optimism-worker`. Enabling cryptos that require missing worker services is rejected by `shkeeperctl`; use `SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml` and configure the matching RPC endpoints when enabling those networks.
+
 After starting a candidate stack, run the Go-native verifier from the image. It checks main `/healthz`, main `/readyz`, optional complete order lookup, optional worker `/healthz` and `/readyz`, and optional authenticated worker/admin probes:
 
 ```bash

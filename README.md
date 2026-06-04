@@ -172,6 +172,8 @@ hk-16-16 模块化 compose 示例：
 SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml shkeeperctl set-cryptos TRX,USDT,USDC,BNB,BNB-USDT,SOL,XMR,XRP
 ```
 
+默认 `docker-compose.example.yml` 不包含 `eth-worker`、`polygon-worker`、`avalanche-worker`、`arbitrum-worker`、`optimism-worker`。如果启用 `ETH-USDT`、`POLYGON-USDT` 等 EVM 币种，请使用 `deploy/hk-16-16.modular.example.yml` 并配置对应 RPC；否则页面会显示离线。
+
 非交互式安装示例：
 
 ```bash
