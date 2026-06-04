@@ -455,14 +455,11 @@ jobs:
           grep -q '"status": "pass"' /tmp/go-shkeeper-release-audit.json
 
           docker run --rm \
-            -v /tmp:/deploy-reports \
-            go-shkeeper-ci sh -lc '/app/runtime-audit > /deploy-reports/go-shkeeper-runtime-audit.json'
+            go-shkeeper-ci /app/runtime-audit > /tmp/go-shkeeper-runtime-audit.json
           sudo chmod 0644 /tmp/go-shkeeper-runtime-audit.json
           docker run --rm --network host \
-            -v /tmp:/deploy-reports \
             -e MARIADB_DATABASE_URL=mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test \
-            -e CUTOVER_PREFLIGHT_OUTPUT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json \
-            go-shkeeper-ci /app/cutover-preflight
+            go-shkeeper-ci /app/cutover-preflight > /tmp/go-shkeeper-cutover-preflight.json
           sudo chmod 0644 /tmp/go-shkeeper-cutover-preflight.json
           docker stats --no-stream --format '{{json .}}' \
             go-shkeeper-smoke go-shkeeper-worker-smoke \
@@ -480,7 +477,7 @@ jobs:
           }
           EOF
           docker run --rm \
-            -v /tmp:/deploy-reports \
+            -v /tmp:/deploy-reports:ro \
             -e GOAL_AUDIT_RUNTIME_AUDIT_FILE=/deploy-reports/go-shkeeper-runtime-audit.json \
             -e GOAL_AUDIT_PREFLIGHT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json \
             -e GOAL_AUDIT_READINESS_FILE=/deploy-reports/go-shkeeper-final-readiness.json \
@@ -493,8 +490,7 @@ jobs:
             -e GOAL_AUDIT_REQUIRE_STRICT_RELEASE_GATES=false \
             -e GOAL_AUDIT_FORBIDDEN_CONTAINERS=bnb-shkeeper,bnb_tasks,tron-shkeeper,tron_tasks \
             -e GOAL_AUDIT_EXPECTED_GO_IMAGE=go-shkeeper-ci \
-            -e GOAL_AUDIT_OUTPUT_FILE=/deploy-reports/go-shkeeper-goal-audit.json \
-            go-shkeeper-ci /app/goal-audit
+            go-shkeeper-ci /app/goal-audit > /tmp/go-shkeeper-goal-audit.json
           sudo chmod 0644 /tmp/go-shkeeper-goal-audit.json
           grep -q '"status": "pass"' /tmp/go-shkeeper-goal-audit.json
 

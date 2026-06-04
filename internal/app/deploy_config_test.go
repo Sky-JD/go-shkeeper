@@ -427,7 +427,7 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 		"/app/runtime-audit",
 		"/app/cutover-preflight",
 		"/app/goal-audit",
-		"CUTOVER_PREFLIGHT_OUTPUT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json",
+		"/tmp/go-shkeeper-cutover-preflight.json",
 		"docker stats --no-stream",
 		"GOAL_AUDIT_CONTAINER_STATS_FILE=/deploy-reports/go-shkeeper-container-stats.jsonl",
 		"GOAL_AUDIT_MAX_CONTAINER_MEMORY_MB=512",
