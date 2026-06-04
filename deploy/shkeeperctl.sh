@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${SHKEEPER_ENV_FILE:-$ROOT_DIR/.env}"
 PROJECT_NAME="${SHKEEPER_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-go-shkeeper}}"
-COMPOSE_FILES_RAW="${SHKEEPER_COMPOSE_FILES:-${SHKEEPER_COMPOSE_FILE:-docker-compose.example.yml}}"
+COMPOSE_FILES_RAW="${SHKEEPER_COMPOSE_FILES:-${SHKEEPER_COMPOSE_FILE:-}}"
 IMAGE="${GO_SHKEEPER_IMAGE:-go-shkeeper:local}"
 REPORT_DIR="${REPORT_DIR:-$ROOT_DIR/deploy-reports}"
 DOCKER_NETWORK="${SHKEEPER_DOCKER_NETWORK:-${PROJECT_NAME}_default}"
@@ -159,6 +159,84 @@ wallet_env_for_crypto() {
   local crypto
   crypto="$(normalize_crypto "$1")"
   printf '%s_WALLET\n' "${crypto//-/_}"
+}
+
+evm_network_for_crypto() {
+  case "$(normalize_crypto "$1")" in
+    BNB|BNB-USDT|BNB-USDC) printf '%s\n' "BNB" ;;
+    ETH|ETH-USDT|ETH-USDC|ETH-PYUSD) printf '%s\n' "ETH" ;;
+    MATIC|POLYGON-USDT|POLYGON-USDC) printf '%s\n' "POLYGON" ;;
+    AVAX|AVALANCHE-USDT|AVALANCHE-USDC) printf '%s\n' "AVALANCHE" ;;
+    ARBETH|ARB-USDC|ARB-PYUSD|ARB-TOKEN) printf '%s\n' "ARB" ;;
+    OPETH|OP-USDT|OP-USDC|OP-TOKEN) printf '%s\n' "OP" ;;
+    *) return 1 ;;
+  esac
+}
+
+evm_networks_for_cryptos() {
+  local crypto network
+  local -A seen=()
+  for crypto in $(split_crypto_lines "$@"); do
+    network="$(evm_network_for_crypto "$crypto" || true)"
+    if [ -n "$network" ] && [ -z "${seen[$network]+x}" ]; then
+      seen[$network]=1
+      printf '%s\n' "$network"
+    fi
+  done
+}
+
+evm_default_fullnode_url() {
+  case "$1" in
+    BNB) printf '%s\n' "https://bsc-rpc.publicnode.com" ;;
+    ETH) printf '%s\n' "https://ethereum-rpc.publicnode.com" ;;
+    POLYGON) printf '%s\n' "https://polygon-bor-rpc.publicnode.com" ;;
+    AVALANCHE) printf '%s\n' "https://avalanche-c-chain-rpc.publicnode.com" ;;
+    ARB) printf '%s\n' "https://arbitrum-one-rpc.publicnode.com" ;;
+    OP) printf '%s\n' "https://optimism-rpc.publicnode.com" ;;
+    *) return 1 ;;
+  esac
+}
+
+evm_default_chain_id() {
+  case "$1" in
+    BNB) printf '%s\n' "56" ;;
+    ETH) printf '%s\n' "1" ;;
+    POLYGON) printf '%s\n' "137" ;;
+    AVALANCHE) printf '%s\n' "43114" ;;
+    ARB) printf '%s\n' "42161" ;;
+    OP) printf '%s\n' "10" ;;
+    *) return 1 ;;
+  esac
+}
+
+evm_default_token_contract() {
+  case "$(normalize_crypto "$1")" in
+    BNB-USDT) printf '%s\n' "0x55d398326f99059fF775485246999027B3197955" ;;
+    BNB-USDC) printf '%s\n' "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d" ;;
+    ETH-USDT) printf '%s\n' "0xdAC17F958D2ee523a2206206994597C13D831ec7" ;;
+    ETH-USDC) printf '%s\n' "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" ;;
+    POLYGON-USDT) printf '%s\n' "0xc2132D05D31c914a87C6611C10748AEb04B58e8F" ;;
+    *) return 1 ;;
+  esac
+}
+
+evm_default_token_decimals() {
+  case "$(normalize_crypto "$1")" in
+    BNB-USDT|BNB-USDC) printf '%s\n' "18" ;;
+    ETH-USDT|ETH-USDC|ETH-PYUSD|POLYGON-USDT|POLYGON-USDC|AVALANCHE-USDT|AVALANCHE-USDC|ARB-USDC|ARB-PYUSD|OP-USDT|OP-USDC) printf '%s\n' "6" ;;
+    *) return 1 ;;
+  esac
+}
+
+evm_token_contract_key() {
+  local crypto
+  crypto="$(normalize_crypto "$1")"
+  case "$crypto" in
+    *-USDT|*-USDC|*-PYUSD|ARB-TOKEN|OP-TOKEN)
+      printf '%s_CONTRACT\n' "${crypto//-/_}"
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 crypto_catalog() {
@@ -364,7 +442,7 @@ configure_wizard() {
   printf '\n选择启用的币种/网络 [%s]: ' "$default_cryptos"
   IFS= read -r selection
   cryptos="$(selection_to_cryptos "$selection" "$default_cryptos")"
-  require_worker_services_available "$cryptos"
+  prepare_cryptos_for_enable "$cryptos"
 
   env_set SHKEEPER_HOST "$host"
   env_set SHKEEPER_PORT "$port"
@@ -409,6 +487,63 @@ env_set_default() {
   if [ -z "$current" ]; then
     env_set "$key" "$value"
   fi
+}
+
+ensure_env_config_value() {
+  local key="$1"
+  local label="$2"
+  local default="${3:-}"
+  local required="${4:-1}"
+  local current value
+  current="$(env_get "$key" || true)"
+  [ -n "$current" ] && return 0
+  value="$default"
+  if is_interactive; then
+    value="$(prompt_value "$label" "$default")"
+    printf '\n' >&2
+  fi
+  if [ -z "$value" ] && [ "$required" = "1" ]; then
+    die "$key is required for selected cryptos"
+  fi
+  if [ -n "$value" ]; then
+    env_set "$key" "$value"
+    log "configured $key"
+  fi
+}
+
+configure_evm_network_env() {
+  local network="$1"
+  local fullnode_key chain_id_key account_password_key default_password
+  fullnode_key="${network}_FULLNODE_URL"
+  chain_id_key="${network}_CHAIN_ID"
+  account_password_key="${network}_ACCOUNT_PASSWORD"
+  default_password="$(rand_hex 18)"
+  ensure_env_config_value "$fullnode_key" "$network RPC URL" "$(evm_default_fullnode_url "$network")" 1
+  ensure_env_config_value "$chain_id_key" "$network chain id" "$(evm_default_chain_id "$network")" 1
+  ensure_env_config_value "$account_password_key" "$network account password" "$default_password" 1
+}
+
+configure_evm_crypto_env() {
+  local crypto="$1"
+  local network contract_key decimals_key default_contract default_decimals
+  network="$(evm_network_for_crypto "$crypto" || true)"
+  [ -n "$network" ] || return 0
+  configure_evm_network_env "$network"
+
+  contract_key="$(evm_token_contract_key "$crypto" || true)"
+  [ -n "$contract_key" ] || return 0
+  decimals_key="${contract_key%_CONTRACT}_DECIMALS"
+  default_contract="$(evm_default_token_contract "$crypto" || true)"
+  default_decimals="$(evm_default_token_decimals "$crypto" || true)"
+  ensure_env_config_value "$contract_key" "$crypto contract address" "$default_contract" 1
+  ensure_env_config_value "$decimals_key" "$crypto decimals" "$default_decimals" 1
+}
+
+configure_runtime_env_for_cryptos() {
+  local crypto
+  for crypto in $(split_crypto_lines "$@"); do
+    configure_evm_crypto_env "$crypto"
+  done
 }
 
 rand_hex() {
@@ -476,19 +611,39 @@ redacted_state() {
 
 compose_file_paths=()
 compose_file_args=()
-IFS=',' read -r -a raw_compose_files <<<"$COMPOSE_FILES_RAW"
-for raw_file in "${raw_compose_files[@]}"; do
-  raw_file="$(trim "$raw_file")"
-  [ -n "$raw_file" ] || continue
-  case "$raw_file" in
-    /*) compose_file="$raw_file" ;;
-    *) compose_file="$ROOT_DIR/$raw_file" ;;
-  esac
-  compose_file_paths+=("$compose_file")
-  compose_file_args+=("-f" "$compose_file")
-done
 
-[ "${#compose_file_args[@]}" -gt 0 ] || die "no compose file configured"
+configured_compose_files_raw() {
+  local raw
+  raw="${SHKEEPER_COMPOSE_FILES:-}"
+  [ -n "$raw" ] || raw="${SHKEEPER_COMPOSE_FILE:-}"
+  [ -n "$raw" ] || raw="$(env_get SHKEEPER_COMPOSE_FILES || true)"
+  [ -n "$raw" ] || raw="$(env_get SHKEEPER_COMPOSE_FILE || true)"
+  [ -n "$raw" ] || raw="docker-compose.example.yml"
+  printf '%s' "$raw"
+}
+
+reload_compose_files() {
+  local raw_file compose_file
+  local -a raw_compose_files=()
+  COMPOSE_FILES_RAW="$(configured_compose_files_raw)"
+  compose_file_paths=()
+  compose_file_args=()
+  IFS=',' read -r -a raw_compose_files <<<"$COMPOSE_FILES_RAW"
+  for raw_file in "${raw_compose_files[@]}"; do
+    raw_file="$(trim "$raw_file")"
+    [ -n "$raw_file" ] || continue
+    case "$raw_file" in
+      /*) compose_file="$raw_file" ;;
+      *) compose_file="$ROOT_DIR/$raw_file" ;;
+    esac
+    compose_file_paths+=("$compose_file")
+    compose_file_args+=("-f" "$compose_file")
+  done
+  SERVICE_LIST=""
+  [ "${#compose_file_args[@]}" -gt 0 ] || die "no compose file configured"
+}
+
+reload_compose_files
 
 compose() {
   if [ "$DRY_RUN" = "1" ]; then
@@ -569,6 +724,52 @@ missing_worker_services_for_cryptos() {
       printf '%s:%s\n' "$crypto" "$worker"
     fi
   done
+}
+
+compose_file_defines_worker() {
+  local file="$1"
+  local service="$2"
+  [ -f "$file" ] || return 1
+  grep -Eq "^[[:space:]]{2}${service}:" "$file"
+}
+
+ensure_compose_services_for_cryptos() {
+  local cryptos="$1"
+  local missing pair crypto worker modular_rel modular_file unresolved
+  missing="$(missing_worker_services_for_cryptos "$cryptos" || true)"
+  [ -z "$missing" ] && return 0
+
+  modular_rel="deploy/hk-16-16.modular.example.yml"
+  modular_file="$ROOT_DIR/$modular_rel"
+  unresolved=""
+  while IFS=: read -r crypto worker; do
+    [ -n "$crypto" ] || continue
+    if ! compose_file_defines_worker "$modular_file" "$worker"; then
+      unresolved="${unresolved}${crypto}:${worker}"$'\n'
+    fi
+  done <<<"$missing"
+
+  if [ -z "$unresolved" ]; then
+    export SHKEEPER_COMPOSE_FILE="$modular_rel"
+    unset SHKEEPER_COMPOSE_FILES
+    env_set SHKEEPER_COMPOSE_FILE "$modular_rel"
+    reload_compose_files
+    missing="$(missing_worker_services_for_cryptos "$cryptos" || true)"
+    if [ -z "$missing" ]; then
+      log "switched compose file to $modular_rel for selected workers"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "$missing" >&2
+  die "current compose files do not define every required worker service"
+}
+
+prepare_cryptos_for_enable() {
+  local cryptos="$1"
+  ensure_compose_services_for_cryptos "$cryptos"
+  configure_runtime_env_for_cryptos "$cryptos"
+  require_worker_services_available "$cryptos"
 }
 
 require_worker_services_available() {
@@ -842,11 +1043,11 @@ init_env() {
   cryptos="$(env_get SHKEEPER_CRYPTOS || true)"
   if [ -z "$cryptos" ]; then
     cryptos="$(normalize_crypto_list "$INIT_CRYPTOS")"
-    write_cryptos "$cryptos"
   else
     cryptos="$(normalize_crypto_list "$cryptos")"
-    write_cryptos "$cryptos"
   fi
+  prepare_cryptos_for_enable "$cryptos"
+  write_cryptos "$cryptos"
   set_wallet_envs enabled "$cryptos"
   log "enabled cryptos: $cryptos"
 }
@@ -1009,7 +1210,7 @@ set_cryptos() {
   local cryptos
   cryptos="$(normalize_crypto_list "$@")"
   validate_cryptos "$cryptos"
-  require_worker_services_available "$cryptos"
+  prepare_cryptos_for_enable "$cryptos"
   write_cryptos "$cryptos"
   set_wallet_envs enabled "$cryptos"
   stop_unused_workers "$cryptos"
@@ -1024,7 +1225,7 @@ enable_crypto() {
   local current next
   current="$(current_cryptos)"
   next="$(normalize_crypto_list "$current" "$@")"
-  require_worker_services_available "$next"
+  prepare_cryptos_for_enable "$next"
   write_cryptos "$next"
   set_wallet_envs enabled "$@"
   start_selected

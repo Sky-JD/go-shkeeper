@@ -158,6 +158,7 @@ shkeeperctl set-cryptos BTC,USDT,BNB-USDT
 
 ```bash
 shkeeperctl enable-crypto TRX USDT BNB-USDT
+shkeeperctl enable-crypto ETH-USDT POLYGON-USDT
 ```
 
 禁用：
@@ -172,7 +173,14 @@ hk-16-16 模块化 compose 示例：
 SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml shkeeperctl set-cryptos TRX,USDT,USDC,BNB,BNB-USDT,SOL,XMR,XRP
 ```
 
-默认 `docker-compose.example.yml` 不包含 `eth-worker`、`polygon-worker`、`avalanche-worker`、`arbitrum-worker`、`optimism-worker`。如果启用 `ETH-USDT`、`POLYGON-USDT` 等 EVM 币种，请使用 `deploy/hk-16-16.modular.example.yml` 并配置对应 RPC；否则页面会显示离线。
+默认 `docker-compose.example.yml` 不包含 `eth-worker`、`polygon-worker`、`avalanche-worker`、`arbitrum-worker`、`optimism-worker`。现在通过 `configure`、`set-cryptos` 或 `enable-crypto` 启用 `ETH-USDT`、`POLYGON-USDT` 等 EVM 币种时，脚本会自动把 `.env` 切到 `deploy/hk-16-16.modular.example.yml`，并补齐 RPC、链 ID、账户密码、USDT 合约地址和 decimals。交互模式会提示确认；非交互模式会使用内置默认值，无法确定默认值的代币会要求你先提供环境变量。
+
+生产环境建议把脚本写入的公共 RPC 改成你自己的稳定 RPC：
+
+```env
+ETH_FULLNODE_URL=https://你的以太坊RPC
+POLYGON_FULLNODE_URL=https://你的Polygon RPC
+```
 
 非交互式安装示例：
 
