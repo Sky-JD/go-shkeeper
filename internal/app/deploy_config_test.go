@@ -427,11 +427,14 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 		"/app/runtime-audit",
 		"/app/cutover-preflight",
 		"/app/goal-audit",
-		"CUTOVER_PREFLIGHT_OUTPUT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json",
+		"CUTOVER_PREFLIGHT_OUTPUT_FILE=/tmp/go-shkeeper-cutover-preflight.json",
+		"cat /tmp/go-shkeeper-cutover-preflight.json",
 		"docker stats --no-stream",
 		"GOAL_AUDIT_CONTAINER_STATS_FILE=/deploy-reports/go-shkeeper-container-stats.jsonl",
 		"GOAL_AUDIT_MAX_CONTAINER_MEMORY_MB=512",
 		"GOAL_AUDIT_REQUIRE_STRICT_RELEASE_GATES=false",
+		"GOAL_AUDIT_OUTPUT_FILE=/tmp/go-shkeeper-goal-audit.json",
+		"cat /tmp/go-shkeeper-goal-audit.json",
 		`grep -q '"status": "pass"' /tmp/go-shkeeper-goal-audit.json`,
 	}
 	for _, item := range required {
