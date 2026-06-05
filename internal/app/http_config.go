@@ -228,11 +228,14 @@ func (h *HTTPHandler) apiExchangeRate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := h.store.UpdateExchangeRate(r.Context(), module.Name, fiat, source, rate, updateRate, fee); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusOK, map[string]any{"status": "error", "message": "No rate configured for " + module.Name + "/" + fiat})
-			return
-		}
+	settings := ExchangeRate{
+		Crypto: module.Name,
+		Fiat:   fiat,
+		Source: source,
+		Rate:   rate,
+		Fee:    fee,
+	}
+	if err := h.store.UpdateExchangeRateSettings(r.Context(), settings, updateRate); err != nil {
 		errorJSON(w, http.StatusInternalServerError, err)
 		return
 	}

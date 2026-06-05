@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -23,7 +24,7 @@ func (s *Server) tronBalance(ctx context.Context, crypto string, address string)
 		var resp struct {
 			Balance jsonNumber `json:"balance"`
 		}
-		if err := s.httpJSON(ctx, httpMethodPost, strings.TrimRight(s.fullnodeURL(), "/")+"/wallet/getaccount", map[string]any{
+		if err := s.tronHTTPJSON(ctx, httpMethodPost, strings.TrimRight(s.fullnodeURL(), "/")+"/wallet/getaccount", map[string]any{
 			"address": addressHex,
 			"visible": false,
 		}, &resp); err != nil {
@@ -58,7 +59,7 @@ func (s *Server) tronBalance(ctx context.Context, crypto string, address string)
 			Message string `json:"message"`
 		} `json:"result"`
 	}
-	if err := s.httpJSON(ctx, httpMethodPost, strings.TrimRight(s.fullnodeURL(), "/")+"/wallet/triggerconstantcontract", map[string]any{
+	if err := s.tronHTTPJSON(ctx, httpMethodPost, strings.TrimRight(s.fullnodeURL(), "/")+"/wallet/triggerconstantcontract", map[string]any{
 		"owner_address":     addressHex,
 		"contract_address":  contractHex,
 		"function_selector": "balanceOf(address)",
@@ -80,29 +81,354 @@ func (s *Server) tronBalance(ctx context.Context, crypto string, address string)
 	return value.Div(decimal.New(1, int32(decimals))), nil
 }
 
-func (s *Server) broadcastTRONPayout(ctx context.Context, crypto string, destination string, amount decimal.Decimal) (broadcastResult, error) {
+func (s *Server) tronHTTPJSON(ctx context.Context, method string, url string, body any, out any) error {
+	retries := intEnv("TRON_HTTP_MAX_RETRIES", 2)
+	if retries < 0 {
+		retries = 0
+	}
+	var err error
+	for attempt := 0; attempt <= retries; attempt++ {
+		err = s.httpJSON(ctx, method, url, body, out)
+		if err == nil || !isTRONRateLimitError(err) || attempt == retries {
+			return err
+		}
+		if sleepErr := sleepContext(ctx, tronRateLimitRetryDelay()); sleepErr != nil {
+			return sleepErr
+		}
+	}
+	return err
+}
+
+func isTRONRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "returned 429") || strings.Contains(text, "request rate exceeded") || strings.Contains(text, "allowed_rps")
+}
+
+func tronRateLimitRetryDelay() time.Duration {
+	ms := intEnv("TRON_RATE_LIMIT_RETRY_MS", 5500)
+	if ms < 0 {
+		ms = 0
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func tronBalanceQueryInterval() time.Duration {
+	ms := intEnv("TRON_BALANCE_QUERY_INTERVAL_MS", 400)
+	if ms < 0 {
+		ms = 0
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func sleepContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+type tronSpendableReport struct {
+	Total        decimal.Decimal
+	Max          decimal.Decimal
+	MaxAddress   string
+	MaxAccount   *Account
+	AccountCount int
+	Checked      int
+	Failed       int
+	FirstErr     error
+}
+
+type tronSpendableCacheEntry struct {
+	Report      tronSpendableReport
+	RefreshedAt time.Time
+	LastError   string
+	LastErrorAt time.Time
+}
+
+func (s *Server) tronSpendableRefreshLoop(ctx context.Context) {
+	cryptos := tronBalanceRefreshCryptos()
+	if len(cryptos) == 0 {
+		if s.logger != nil {
+			s.logger.Info("tron balance cache disabled because no TRON cryptos are enabled")
+		}
+		return
+	}
+	if boolEnv("TRON_BALANCE_REFRESH_ON_START", true) {
+		s.refreshTRONSpendableCryptos(ctx, cryptos)
+	}
+	interval := tronBalanceRefreshInterval()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.refreshTRONSpendableCryptos(ctx, cryptos)
+		}
+	}
+}
+
+func (s *Server) refreshTRONSpendableCryptos(ctx context.Context, cryptos []string) {
+	for _, crypto := range cryptos {
+		if ctx.Err() != nil {
+			return
+		}
+		refreshCtx, cancel := context.WithTimeout(ctx, tronBalanceRefreshTimeout())
+		_, err := s.refreshTRONSpendable(refreshCtx, crypto)
+		cancel()
+		if err != nil && s.logger != nil {
+			s.logger.Warn("tron balance cache refresh failed", "crypto", crypto, "error", err)
+		}
+	}
+}
+
+func (s *Server) refreshTRONSpendable(ctx context.Context, crypto string) (tronSpendableReport, error) {
+	crypto = strings.ToUpper(strings.TrimSpace(crypto))
+	report, err := s.tronSpendable(ctx, crypto)
+	s.storeTRONSpendableCache(crypto, report, err)
+	return report, err
+}
+
+func (s *Server) storeTRONSpendableCache(crypto string, report tronSpendableReport, err error) {
+	if s == nil {
+		return
+	}
+	now := time.Now()
+	crypto = strings.ToUpper(strings.TrimSpace(crypto))
+	s.tronSpendableMu.Lock()
+	defer s.tronSpendableMu.Unlock()
+	entry := s.tronSpendableCache[crypto]
+	if err != nil {
+		entry.LastError = err.Error()
+		entry.LastErrorAt = now
+		if entry.RefreshedAt.IsZero() {
+			entry.Report = report
+		}
+		s.tronSpendableCache[crypto] = entry
+		return
+	}
+	s.tronSpendableCache[crypto] = tronSpendableCacheEntry{
+		Report:      report,
+		RefreshedAt: now,
+	}
+}
+
+func (s *Server) loadTRONSpendableCache(crypto string) (tronSpendableCacheEntry, bool) {
+	crypto = strings.ToUpper(strings.TrimSpace(crypto))
+	s.tronSpendableMu.RLock()
+	defer s.tronSpendableMu.RUnlock()
+	entry, ok := s.tronSpendableCache[crypto]
+	return entry, ok
+}
+
+func (s *Server) cachedTRONSpendable(ctx context.Context, crypto string, refresh bool) (tronSpendableCacheEntry, bool, error) {
+	crypto = strings.ToUpper(strings.TrimSpace(crypto))
+	if refresh || !boolEnv("TRON_BALANCE_CACHE_ENABLED", true) {
+		_, err := s.refreshTRONSpendable(ctx, crypto)
+		entry, ok := s.loadTRONSpendableCache(crypto)
+		return entry, ok && !entry.RefreshedAt.IsZero(), err
+	}
+	entry, ok := s.loadTRONSpendableCache(crypto)
+	if ok && !entry.RefreshedAt.IsZero() {
+		return entry, true, nil
+	}
+	s.kickTRONSpendableRefresh(crypto)
+	entry, ok = s.loadTRONSpendableCache(crypto)
+	return entry, ok && !entry.RefreshedAt.IsZero(), nil
+}
+
+func (s *Server) kickTRONSpendableRefresh(crypto string) {
+	if !boolEnv("TRON_BALANCE_CACHE_ENABLED", true) {
+		return
+	}
+	crypto = strings.ToUpper(strings.TrimSpace(crypto))
+	if crypto == "" {
+		return
+	}
+	s.tronRefreshMu.Lock()
+	if s.tronRefreshing[crypto] {
+		s.tronRefreshMu.Unlock()
+		return
+	}
+	s.tronRefreshing[crypto] = true
+	s.tronRefreshMu.Unlock()
+	go func() {
+		defer func() {
+			s.tronRefreshMu.Lock()
+			delete(s.tronRefreshing, crypto)
+			s.tronRefreshMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), tronBalanceRefreshTimeout())
+		defer cancel()
+		if _, err := s.refreshTRONSpendable(ctx, crypto); err != nil && s.logger != nil {
+			s.logger.Warn("tron balance cache async refresh failed", "crypto", crypto, "error", err)
+		}
+	}()
+}
+
+func (s *Server) tronRefreshInProgress(crypto string) bool {
+	crypto = strings.ToUpper(strings.TrimSpace(crypto))
+	s.tronRefreshMu.Lock()
+	defer s.tronRefreshMu.Unlock()
+	return s.tronRefreshing[crypto]
+}
+
+func (s *Server) tronSpendableForPayout(ctx context.Context, crypto string, amount decimal.Decimal) (tronSpendableReport, error) {
+	entry, ready, err := s.cachedTRONSpendable(ctx, crypto, false)
+	if err != nil {
+		return entry.Report, err
+	}
+	if ready {
+		if tronSpendableCacheEntryStale(entry) {
+			s.kickTRONSpendableRefresh(crypto)
+		}
+		return entry.Report, nil
+	}
+	s.kickTRONSpendableRefresh(crypto)
+	return entry.Report, fmt.Errorf("TRON %s balance cache is warming up", strings.ToUpper(strings.TrimSpace(crypto)))
+}
+
+func tronBalanceRefreshInterval() time.Duration {
+	seconds := intEnv("TRON_BALANCE_REFRESH_INTERVAL_SECONDS", 60)
+	if seconds < 5 {
+		seconds = 5
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func tronBalanceRefreshTimeout() time.Duration {
+	seconds := intEnv("TRON_BALANCE_REFRESH_TIMEOUT_SECONDS", 120)
+	if seconds < 10 {
+		seconds = 10
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func tronBalanceCacheMaxAge() time.Duration {
+	seconds := intEnv("TRON_BALANCE_CACHE_MAX_AGE_SECONDS", 180)
+	if seconds < 0 {
+		seconds = 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func tronSpendableCacheEntryStale(entry tronSpendableCacheEntry) bool {
+	if entry.RefreshedAt.IsZero() {
+		return true
+	}
+	maxAge := tronBalanceCacheMaxAge()
+	return maxAge > 0 && time.Since(entry.RefreshedAt) > maxAge
+}
+
+func tronBalanceRefreshCryptos() []string {
+	source := firstNonEmpty(os.Getenv("TRON_BALANCE_REFRESH_CRYPTOS"), os.Getenv("SHKEEPER_CRYPTOS"))
+	if strings.TrimSpace(source) == "" {
+		return []string{"TRX", "USDT", "USDC"}
+	}
+	enabled := strings.TrimSpace(os.Getenv("SHKEEPER_CRYPTOS")) != "" && strings.TrimSpace(os.Getenv("TRON_BALANCE_REFRESH_CRYPTOS")) == ""
+	out := make([]string, 0, 3)
+	seen := map[string]struct{}{}
+	var add func(string)
+	add = func(value string) {
+		value = strings.ToUpper(strings.TrimSpace(value))
+		if value == "" {
+			return
+		}
+		if value == "TRON" {
+			for _, item := range []string{"TRX", "USDT", "USDC"} {
+				add(item)
+			}
+			return
+		}
+		if value != "TRX" && value != "USDT" && value != "USDC" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	for _, item := range splitCSV(source) {
+		add(item)
+	}
+	if enabled {
+		return out
+	}
+	if len(out) == 0 {
+		return []string{"TRX", "USDT", "USDC"}
+	}
+	return out
+}
+
+func (s *Server) tronSpendable(ctx context.Context, crypto string) (tronSpendableReport, error) {
 	accounts, err := s.store.ListAccounts(ctx, s.cfg.Module, crypto)
 	if err != nil {
-		return broadcastResult{}, err
+		return tronSpendableReport{}, err
 	}
 	if len(accounts) == 0 && crypto != "TRX" {
 		accounts, err = s.store.AccountsByModule(ctx, s.cfg.Module)
 		if err != nil {
-			return broadcastResult{}, err
+			return tronSpendableReport{}, err
 		}
 	}
-	for _, account := range accounts {
+	report := tronSpendableReport{AccountCount: len(accounts)}
+	for i, account := range accounts {
+		if i > 0 {
+			if err := sleepContext(ctx, tronBalanceQueryInterval()); err != nil {
+				return report, err
+			}
+		}
 		balance, err := s.tronBalance(ctx, crypto, account.Address)
-		if err != nil || balance.LessThan(amount) {
+		if err != nil {
+			report.Failed++
+			if report.FirstErr == nil {
+				report.FirstErr = err
+			}
+			if s.logger != nil {
+				s.logger.Warn("tron balance lookup failed", "crypto", crypto, "address", account.Address, "error", err)
+			}
 			continue
 		}
-		txid, err := s.signAndBroadcastTRON(ctx, account, crypto, destination, amount)
-		if err != nil {
-			return broadcastResult{}, err
+		report.Checked++
+		report.Total = report.Total.Add(balance)
+		if balance.GreaterThan(report.Max) {
+			accountCopy := account
+			report.Max = balance
+			report.MaxAddress = account.Address
+			report.MaxAccount = &accountCopy
 		}
-		return broadcastResult{Dest: destination, TxIDs: []string{txid}, Status: "success"}, nil
 	}
-	return broadcastResult{}, fmt.Errorf("no %s account has enough balance for payout", crypto)
+	if report.Checked == 0 && report.Failed > 0 {
+		return report, fmt.Errorf("TRON %s balance lookup failed for all %d accounts; first error: %v", crypto, report.Failed, report.FirstErr)
+	}
+	return report, nil
+}
+
+func (s *Server) broadcastTRONPayout(ctx context.Context, crypto string, destination string, amount decimal.Decimal) (broadcastResult, error) {
+	report, err := s.tronSpendableForPayout(ctx, crypto, amount)
+	if err != nil {
+		return broadcastResult{}, err
+	}
+	if report.MaxAccount == nil || report.Max.LessThan(amount) {
+		return broadcastResult{}, fmt.Errorf("no %s account has enough balance for payout; requested=%s total=%s max_single_account=%s account_count=%d", crypto, amount.String(), report.Total.String(), report.Max.String(), report.AccountCount)
+	}
+	txid, err := s.signAndBroadcastTRON(ctx, *report.MaxAccount, crypto, destination, amount)
+	if err != nil {
+		return broadcastResult{}, err
+	}
+	return broadcastResult{Dest: destination, TxIDs: []string{txid}, Status: "success"}, nil
 }
 
 func (s *Server) signAndBroadcastTRON(ctx context.Context, account Account, crypto string, destination string, amount decimal.Decimal) (string, error) {
@@ -396,7 +722,7 @@ func tronTokenConfig(crypto string) (contract string, decimals int, err error) {
 	if contract == "" {
 		switch strings.ToUpper(crypto) {
 		case "USDT":
-			contract = "TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj"
+			contract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 		case "USDC":
 			contract = "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8"
 		default:

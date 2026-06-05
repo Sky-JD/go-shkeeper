@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -67,6 +69,50 @@ func TestCompatBackendEndpoints(t *testing.T) {
 				t.Fatalf("unexpected status=%d body=%s", res.Code, res.Body.String())
 			}
 		})
+	}
+}
+
+func TestAPIBalanceChecksTRONStatusBeforeBalance(t *testing.T) {
+	store, cfg := testStore(t)
+	defer store.Close()
+	cfg.CryptoAllowList = []string{"USDT"}
+	ctx := t.Context()
+	if err := store.EnsureWallet(ctx, "USDT", "test-api-key"); err != nil {
+		t.Fatalf("ensure wallet: %v", err)
+	}
+	if err := store.EnsureExchangeRate(ctx, "USDT", "USD"); err != nil {
+		t.Fatalf("ensure rate: %v", err)
+	}
+	if _, err := store.DB().Exec("UPDATE " + store.table("exchange_rate") + " SET source = 'manual', rate = 1 WHERE crypto = 'USDT' AND fiat = 'USD'"); err != nil {
+		t.Fatalf("set rate: %v", err)
+	}
+
+	var balanceSeen atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/USDT/status":
+			if balanceSeen.Load() {
+				writeJSON(w, http.StatusBadGateway, map[string]any{"status": "error"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"last_block_timestamp": time.Now().Unix()})
+		case "/USDT/balance":
+			balanceSeen.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{"balance": "0"})
+		default:
+			t.Fatalf("unexpected backend path: %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+	t.Setenv("TRON_API_SERVER_HOST", strings.TrimPrefix(backend.URL, "http://"))
+
+	handler := newTestHTTPHandler(t, store, cfg)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/USDT/balance", nil)
+	req.Header.Set("X-Shkeeper-Api-Key", "test-api-key")
+	res := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"server_status":"Synced"`) {
+		t.Fatalf("balance status=%d body=%s", res.Code, res.Body.String())
 	}
 }
 

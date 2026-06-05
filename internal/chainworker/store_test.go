@@ -32,7 +32,7 @@ func testStore(t *testing.T) *Store {
 	if err := store.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	for _, table := range []string{"chain_task", "chain_account"} {
+	for _, table := range []string{"chain_deposit_event", "chain_deposit_scan_cursor", "chain_task", "chain_account"} {
 		if _, err := store.db.Exec("DELETE FROM " + table); err != nil {
 			t.Fatalf("cleanup %s: %v", table, err)
 		}

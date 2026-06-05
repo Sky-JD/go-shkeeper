@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +33,33 @@ func TestLegacyAccountPasswordFetchesDecryptEndpoint(t *testing.T) {
 	}
 	if got != "legacy-key" {
 		t.Fatalf("unexpected password: %q", got)
+	}
+}
+
+func TestConfiguredLegacyAccountPasswordDoesNotFetchDecryptEndpoint(t *testing.T) {
+	t.Setenv("LEGACY_ACCOUNT_PASSWORD", "")
+	t.Setenv("LEGACY_ACCOUNT_PASSWORD_FILE", "")
+	t.Setenv("LEGACY_ACCOUNT_DECRYPT_URL", "http://127.0.0.1:1/decrypt")
+	t.Setenv("SHKEEPER_HOST", "127.0.0.1")
+
+	got, explicit, err := configuredLegacyAccountPassword()
+	if err != nil {
+		t.Fatalf("configuredLegacyAccountPassword error: %v", err)
+	}
+	if got != "" || explicit {
+		t.Fatalf("unexpected configured password: got=%q explicit=%v", got, explicit)
+	}
+}
+
+func TestShouldRetryWithLegacyAccountPassword(t *testing.T) {
+	if !shouldRetryWithLegacyAccountPassword(errors.New("address 0x1: legacy account password is required")) {
+		t.Fatalf("expected missing legacy password error to retry")
+	}
+	if !shouldRetryWithLegacyAccountPassword(errors.New("address 0x1: legacy fernet token signature mismatch")) {
+		t.Fatalf("expected legacy fernet error to retry")
+	}
+	if shouldRetryWithLegacyAccountPassword(errors.New("crypto is required")) {
+		t.Fatalf("unexpected retry for unrelated import error")
 	}
 }
 

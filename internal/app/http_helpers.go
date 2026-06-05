@@ -48,20 +48,21 @@ func (h *HTTPHandler) Routes() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(h.auth.RequireLogin)
-		r.Get("/wallets", h.wallets)
-		r.Get("/wallet/{crypto}", h.walletManagePage)
-		r.Get("/payout/{crypto}", h.payoutPage)
+		r.Get("/wallets", h.adminAppPage)
+		r.Get("/wallet/{crypto}", h.adminAppPage)
+		r.Get("/payout/{crypto}", h.adminAppPage)
+		r.Get("/admin/*", h.adminAsset)
 		r.Get("/{crypto}/get-rate", h.sourceRate)
 		r.Get("/{crypto}/get-rate/{fiat}", h.sourceRate)
-		r.Get("/rates", h.ratesPage)
-		r.Get("/rates/{fiat}", h.ratesPage)
+		r.Get("/rates", h.adminAppPage)
+		r.Get("/rates/{fiat}", h.adminAppPage)
 		r.Post("/rates", h.ratesPost)
 		r.Post("/rates/{fiat}", h.ratesPost)
-		r.Get("/transactions", h.transactionsPage)
+		r.Get("/transactions", h.adminAppPage)
 		r.Get("/parts/transactions", h.transactionsPart)
-		r.Get("/payouts", h.payoutsPage)
+		r.Get("/payouts", h.adminAppPage)
 		r.Get("/parts/payouts", h.payoutsPart)
-		r.Get("/settings", h.settingsGet)
+		r.Get("/settings", h.adminAppPage)
 		r.Post("/settings/account", h.settingsAccountPost)
 		r.Post("/settings/locale", h.settingsLocalePost)
 		r.Get("/unlock", h.unlockGet)
@@ -121,6 +122,17 @@ func (h *HTTPHandler) Routes() http.Handler {
 			r.With(h.auth.RequireAdminOrBasic).Post("/{crypto}/multipayout", h.apiMultiPayout)
 			r.With(h.auth.RequireAdminOrBasic).Get("/{crypto}/task/{id}", h.apiTask)
 			r.With(h.auth.RequireAdminOrBasic).Patch("/admin/account", h.apiAdminAccount)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/bootstrap", h.apiAdminBootstrap)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/wallets", h.apiAdminWallets)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/wallets/{crypto}", h.apiAdminWalletDetail)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/cryptos", h.apiAdminCryptos)
+			r.With(h.auth.RequireAdminOrBasic).Post("/admin/cryptos", h.apiAdminCryptosPost)
+			r.With(h.auth.RequireAdminOrBasic).Post("/admin/wallet-import", h.apiAdminWalletImport)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/orders", h.apiAdminOrders)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/payouts", h.apiAdminPayouts)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/payout-quote", h.apiAdminPayoutQuote)
+			r.With(h.auth.RequireAdminOrBasic).Get("/admin/rates", h.apiAdminRates)
+			r.With(h.auth.RequireAdminOrBasic).Post("/admin/rates", h.apiAdminRatesPost)
 
 			r.Post("/walletnotify/{crypto}/{txid}", h.apiWalletNotify)
 			r.Post("/payoutnotify/{crypto}", h.apiPayoutNotify)
@@ -205,7 +217,7 @@ button{border:0;border-radius:6px;background:#111827;color:#fff;padding:10px 16p
 button.secondary{background:#2563eb}
 table{width:100%%;border-collapse:collapse}
 th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:10px;font-size:14px}
-.muted{color:#6b7280}.err{color:#b91c1c}.ok{color:#047857}.warn{color:#b45309}
+.muted{color:#6b7280}.err{color:#b91c1c}.ok{color:#047857}
 </style>
 </head>
 <body><main class="shell">%s</main></body></html>`, html.EscapeString(title), body)

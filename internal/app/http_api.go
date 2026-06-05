@@ -73,6 +73,7 @@ func (h *HTTPHandler) apiBalances(w http.ResponseWriter, r *http.Request) {
 				if !ok {
 					continue
 				}
+				serverStatus := h.crypto.Status(r.Context(), module)
 				balance, source, balanceErr := h.crypto.Balance(r.Context(), module)
 				rate, err := h.store.ExchangeRate(r.Context(), "USD", module.Name)
 				currentRate := decimal.Zero
@@ -86,7 +87,7 @@ func (h *HTTPHandler) apiBalances(w http.ResponseWriter, r *http.Request) {
 					"rate":           currentRate.String(),
 					"fiat":           "USD",
 					"amount_fiat":    balance.Mul(currentRate).String(),
-					"server_status":  h.crypto.Status(r.Context(), module),
+					"server_status":  serverStatus,
 					"balance_source": source,
 					"balance_error":  balanceErr,
 				}
@@ -122,6 +123,7 @@ func (h *HTTPHandler) apiBalance(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusNotFound, err)
 		return
 	}
+	serverStatus := h.crypto.Status(r.Context(), module)
 	balance, source, balanceErr := h.crypto.Balance(r.Context(), module)
 	rate, rateErr := h.store.ExchangeRate(r.Context(), "USD", module.Name)
 	currentRate := decimal.Zero
@@ -135,7 +137,7 @@ func (h *HTTPHandler) apiBalance(w http.ResponseWriter, r *http.Request) {
 		"rate":           currentRate.String(),
 		"fiat":           "USD",
 		"amount_fiat":    balance.Mul(currentRate).String(),
-		"server_status":  h.crypto.Status(r.Context(), module),
+		"server_status":  serverStatus,
 		"balance_source": source,
 		"balance_error":  balanceErr,
 	}

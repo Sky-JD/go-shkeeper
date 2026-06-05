@@ -10,26 +10,6 @@ Tune `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_IDLE_SECONDS`, and `
 
 The compose examples use `/readyz` healthchecks for the main service and Go workers. `/readyz` verifies the process can reach MariaDB, so rollout automation can distinguish a live process from a database-ready service.
 
-`shkeeperctl.sh` is the daily Docker management wrapper. It initializes `.env`, builds and starts only the enabled crypto workers, upgrades the checked-out source, stops or removes the stack, and keeps `SHKEEPER_CRYPTOS` plus matching `*_WALLET` switches in sync. In an interactive terminal, first install asks for bind IP, host port, and a numbered multi-select crypto/network list. Non-interactive installs can use `SHKEEPER_HOST`, `SHKEEPER_PORT`, and `SHKEEPER_INIT_CRYPTOS` instead.
-
-```bash
-cd /root/go-shkeeper
-bash deploy/shkeeperctl.sh install
-shkeeperctl
-bash deploy/shkeeperctl.sh configure
-bash deploy/shkeeperctl.sh enable-crypto TRX USDT BNB-USDT
-bash deploy/shkeeperctl.sh show-cryptos
-bash deploy/shkeeperctl.sh upgrade
-```
-
-`install` installs `/usr/local/bin/shkeeperctl` when permissions allow it. Running `shkeeperctl` without arguments opens a management panel for install, update, uninstall, status, logs, crypto selection, admin password, wallet API key, backend key, and worker serverkey actions. Password and key input in the panel is displayed plainly so operators can confirm what they typed. Direct commands remain available, for example `shkeeperctl set-api-key /secure/api_key`, `shkeeperctl admin-password admin /secure/admin_password`, and `shkeeperctl worker-serverkey BNB,BNB-USDT worker /secure/worker_password`.
-
-The one-shot `admin-password` and `worker-serverkey` helpers run their temporary compose containers as `SHKEEPER_UTILITY_DOCKER_USER`, default `0:0`, so they can read local `0600` secret files mounted into `/run/secrets`. The long-running SHKeeper service image still runs as the non-root `shkeeper` user.
-
-For the hk modular compose file, pass `SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml`. `SHKEEPER_DRY_RUN=1` prints Docker/Git actions while still validating and updating the local `.env` crypto configuration. `uninstall` is guarded with `CONFIRM_UNINSTALL=GO_SHKEEPER`, and data volume removal additionally requires `PURGE_DATA=1 CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA`.
-
-The default `docker-compose.example.yml` does not define the EVM worker services `eth-worker`, `polygon-worker`, `avalanche-worker`, `arbitrum-worker`, or `optimism-worker`. When `configure`, `set-cryptos`, or `enable-crypto` selects cryptos that need those services, `shkeeperctl` switches `.env` to `SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml` and configures required EVM runtime settings such as fullnode URL, chain ID, account password, token contract, and decimals. Interactive runs prompt for confirmation; non-interactive runs use built-in defaults where available and fail when a required value has no known default. Replace public RPC defaults with your own production RPC endpoints before going live.
-
 After starting a candidate stack, run the Go-native verifier from the image. It checks main `/healthz`, main `/readyz`, optional complete order lookup, optional worker `/healthz` and `/readyz`, and optional authenticated worker/admin probes:
 
 ```bash
@@ -56,6 +36,48 @@ docker run --rm --network host \
 ```
 
 For a temporary read-only main-service check against an already migrated MariaDB database, run the Go main service with `SCHEDULER_ENABLED=false`, `SHKEEPER_MIGRATE_ON_START=false`, and `SHKEEPER_ENSURE_CURRENCIES_ON_START=false`. This lets `/app/deploy-check` exercise `/api/v1/orders`, order status matrix, and parallel latency paths without startup migrations, currency registration writes, callbacks, or payout polling.
+
+## Updating the hk-16-16 candidate stack
+
+For day-to-day candidate updates on hk-16-16, push the current local `go-shkeeper` working tree and rebuild the Go stack:
+
+```bash
+cd /path/to/shkeeper.io-zh/go-shkeeper
+bash deploy/hk-16-16-update-candidate.sh
+```
+
+The script uploads a source archive to `hk-16-16:/tmp`, extracts it into `/root/go-shkeeper`, preserves the server runtime files (`.env`, `docker-compose.example.yml`, server-only manager scripts, and secrets), then runs `deploy/shkeeperctl.sh source-upgrade` on the server. It waits for `/readyz` and checks that the rebuilt `/app/shkeeper` binary contains the admin Vue API markers.
+
+When the server directory is a Git checkout, the manager can pull the latest backend and frontend source directly, rebuild the selected services, wait for `/readyz`, and verify that the rebuilt binary contains the admin Vue API markers:
+
+```bash
+cd /root/go-shkeeper
+bash deploy/shkeeperctl.sh pull-upgrade
+```
+
+In the interactive manager panel, option `19) 源码升级并验证` uses the same Git pull path automatically unless `SHKEEPER_SOURCE_ARCHIVE` is set.
+
+The server manager also supports the same flow directly when a source archive already exists on the host:
+
+```bash
+cd /root/go-shkeeper
+bash deploy/shkeeperctl.sh source-upgrade /tmp/go-shkeeper-src.tgz
+```
+
+`source-upgrade` is the manager-script-aware path for frontend changes. It preserves runtime config, applies the archive, skips remote `git pull`, rebuilds the selected services, waits for `/readyz`, verifies the admin Vue markers in the rebuilt binary, and removes the archive unless `SHKEEPER_KEEP_SOURCE_ARCHIVE=1` is set.
+
+Override defaults when needed:
+
+```bash
+HK_SHKEEPER_HOST=hk-16-16 \
+HK_SHKEEPER_REMOTE_DIR=/root/go-shkeeper \
+GO_SHKEEPER_IMAGE=go-shkeeper:local \
+bash deploy/hk-16-16-update-candidate.sh
+```
+
+The admin UI source is the Vue/Vite app under `web/admin`. The Dockerfile builds it with a Node stage and embeds the generated `internal/app/admin_dist` assets into the Go binary. There is no separate production `dist` upload step, but frontend changes still require the updated Vue source to reach the server and the Go image to be rebuilt. Running plain `shkeeperctl upgrade` on a server checkout that has not received the new source will rebuild the old frontend; use `source-upgrade` for uploaded local source archives.
+
+The `/wallets` admin page can save the desired crypto list and returns the matching manager command, for example `shkeeperctl set-cryptos BNB,BNB-USDT,TRX,USDT`. To let the Web process execute that command directly, set `SHKEEPER_ADMIN_CRYPTO_COMMAND` to an executable manager command available inside the main container and provide the required Docker/Compose access. When that variable is empty, the Web UI only saves the desired wallet/rate state and shows the command to run on the host.
 
 On hk-16-16, run the repeatable MariaDB-only staging rehearsal before any production replacement. It builds the Go image when needed, creates an isolated MariaDB database, imports the old main data through `/app/import-legacy-main-mariadb`, imports legacy BNB accounts through `/app/import-legacy-accounts` when the old backend key is available, starts temporary Go main/BNB/TRON containers, runs payment/admin/order-list checks, and finishes with `/app/cutover-audit` plus a non-production `/app/release-audit` pass:
 
@@ -425,7 +447,7 @@ The post-cutover verifier fails when the live main service or workers are not re
 - `xmr-worker`: Go chain worker for XMR endpoints backed by Monero daemon RPC and `monero-wallet-rpc`.
 - `xrp-worker`: Go chain worker for XRP endpoints backed by rippled JSON-RPC.
 - `mariadb`: shared MariaDB database.
-- `redis`: reserved for future async queue compatibility; the current Go workers persist tasks in MariaDB.
+- `redis`: reserved for future async queue compatibility; the current Go workers persist tasks in MariaDB. `shkeeperctl` does not start or count this service by default, so existing host-level Redis containers are not disturbed. Set `SHKEEPER_MANAGED_REDIS=1` only when this compose stack should own Redis.
 
 ## Current Worker Coverage
 

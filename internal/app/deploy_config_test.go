@@ -418,7 +418,6 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 		"contrib/shkeeper-change-password.sh",
 		"Reject SQLite and Python dependencies",
 		"Reject active SQLite and Python source",
-		"deploy/install.sh",
 		"deploy/hk-16-16-staging-rehearsal.sh",
 		"deploy/hk-16-16-production-cutover.sh",
 		"deploy/hk-16-16-final-readiness.sh",
@@ -428,7 +427,7 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 		"/app/runtime-audit",
 		"/app/cutover-preflight",
 		"/app/goal-audit",
-		"/tmp/go-shkeeper-cutover-preflight.json",
+		"CUTOVER_PREFLIGHT_OUTPUT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json",
 		"docker stats --no-stream",
 		"GOAL_AUDIT_CONTAINER_STATS_FILE=/deploy-reports/go-shkeeper-container-stats.jsonl",
 		"GOAL_AUDIT_MAX_CONTAINER_MEMORY_MB=512",
@@ -522,179 +521,6 @@ func TestContribPasswordHelperUsesGoAdminAccountAndMariaDB(t *testing.T) {
 	for _, item := range forbidden {
 		if strings.Contains(lowered, item) {
 			t.Fatalf("password helper must not contain %q", item)
-		}
-	}
-}
-
-func TestShkeeperControlScriptManagesDockerAndCryptosSafely(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/shkeeperctl.sh")
-	if err != nil {
-		t.Fatalf("read shkeeper control script: %v", err)
-	}
-	text := string(body)
-	required := []string{
-		"#!/usr/bin/env bash",
-		"install_manager",
-		"MANAGER_BIN",
-		"UTILITY_DOCKER_USER",
-		"SHKEEPER_UTILITY_DOCKER_USER",
-		"run_panel",
-		"color_text",
-		"stack_status_key",
-		"colored_stack_status",
-		"print_status_summary",
-		"configured_compose_files_raw",
-		"reload_compose_files",
-		"missing_worker_services_for_cryptos",
-		"require_worker_services_available",
-		"prepare_cryptos_for_enable",
-		"configure_runtime_env_for_cryptos",
-		"configure_evm_crypto_env",
-		"evm_default_token_contract",
-		"panel_set_admin_password",
-		"panel_set_api_key",
-		"panel_set_worker_serverkey",
-		"docker compose run --rm --no-deps",
-		"compose run --rm --no-deps --user",
-		"set-api-key",
-		"set-secret-key",
-		"set-backend-key",
-		"show-config",
-		"SHKEEPER_SECRET_DIR",
-		"configure_wizard",
-		"configure_stack",
-		"SHKEEPER_INTERACTIVE",
-		"SHKEEPER_HOST",
-		"SHKEEPER_PORT",
-		"selection_to_cryptos",
-		"prompt_port",
-		"install_stack",
-		"upgrade_stack",
-		"uninstall_stack",
-		"enable-crypto",
-		"disable-crypto",
-		"set-cryptos",
-		"SHKEEPER_CRYPTOS",
-		"set_wallet_envs",
-		"worker_for_crypto",
-		"admin-password",
-		"worker-serverkey",
-		"MARIADB_DATABASE_URL",
-		"SHKEEPER_DRY_RUN",
-		"CONFIRM_UNINSTALL=GO_SHKEEPER",
-		"CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA",
-		"hk-docker-debug.sh",
-		"hk-16-16-final-readiness.sh",
-	}
-	for _, item := range required {
-		if !strings.Contains(text, item) {
-			t.Fatalf("shkeeper control script is missing %q", item)
-		}
-	}
-	forbidden := []string{
-		"python",
-		"sqlite://",
-		"sqlite3",
-		"DROP DATABASE",
-		`-e DATABASE_URL=`,
-		"read -r -s",
-	}
-	lowered := strings.ToLower(text)
-	for _, item := range forbidden {
-		if strings.Contains(lowered, strings.ToLower(item)) {
-			t.Fatalf("shkeeper control script must not contain %q", item)
-		}
-	}
-
-	readmeBody, err := os.ReadFile("../../README.md")
-	if err != nil {
-		t.Fatalf("read README: %v", err)
-	}
-	readme := string(readmeBody)
-	for _, item := range []string{
-		"deploy/install.sh",
-		"deploy/shkeeperctl.sh",
-		"shkeeperctl",
-		"curl -fsSL https://raw.githubusercontent.com/Sky-JD/go-shkeeper/main/deploy/install.sh",
-		"X-Shkeeper-Api-Key",
-		"/api/v1/USDT/payment_request",
-		"/api/v1/orders",
-		"shkeeperctl status",
-		"bash deploy/shkeeperctl.sh install-manager",
-		"bash deploy/shkeeperctl.sh set-api-key /secure/api_key",
-		"bash deploy/shkeeperctl.sh configure",
-		"SHKEEPER_HOST=0.0.0.0 SHKEEPER_PORT=8080",
-		"enable-crypto TRX USDT BNB-USDT",
-		"CONFIRM_UNINSTALL=GO_SHKEEPER",
-		"SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml",
-	} {
-		if !strings.Contains(readme, item) {
-			t.Fatalf("README is missing shkeeperctl marker %q", item)
-		}
-	}
-
-	gitignoreBody, err := os.ReadFile("../../.gitignore")
-	if err != nil {
-		t.Fatalf("read .gitignore: %v", err)
-	}
-	if !strings.Contains(string(gitignoreBody), "secrets/") {
-		t.Fatalf(".gitignore must exclude shkeeperctl local secret files")
-	}
-}
-
-func TestOneClickInstallScriptClonesAndRunsShkeeperctl(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/install.sh")
-	if err != nil {
-		t.Fatalf("read install script: %v", err)
-	}
-	text := string(body)
-	required := []string{
-		"#!/usr/bin/env bash",
-		"GO_SHKEEPER_REPO",
-		"GO_SHKEEPER_DIR",
-		"GO_SHKEEPER_REF",
-		"https://github.com/Sky-JD/go-shkeeper.git",
-		"git clone",
-		"docker compose version",
-		"bash deploy/shkeeperctl.sh install",
-	}
-	for _, item := range required {
-		if !strings.Contains(text, item) {
-			t.Fatalf("install script is missing %q", item)
-		}
-	}
-	forbidden := []string{
-		"python",
-		"sqlite://",
-		"sqlite3",
-		"DROP DATABASE",
-		`-e DATABASE_URL=`,
-	}
-	lowered := strings.ToLower(text)
-	for _, item := range forbidden {
-		if strings.Contains(lowered, strings.ToLower(item)) {
-			t.Fatalf("install script must not contain %q", item)
-		}
-	}
-}
-
-func TestComposeExamplesAllowCustomHostPort(t *testing.T) {
-	files := []string{
-		"../../docker-compose.example.yml",
-		"../../deploy/hk-16-16.modular.example.yml",
-	}
-	for _, file := range files {
-		body, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatalf("read compose file %s: %v", file, err)
-		}
-		text := string(body)
-		want := `"${SHKEEPER_HOST:-127.0.0.1}:${SHKEEPER_PORT:-5000}:5000"`
-		if !strings.Contains(text, want) {
-			t.Fatalf("%s must expose the main service through SHKEEPER_HOST and SHKEEPER_PORT", file)
-		}
-		if strings.Contains(text, `"127.0.0.1:5000:5000"`) {
-			t.Fatalf("%s must not hard-code the host port mapping", file)
 		}
 	}
 }

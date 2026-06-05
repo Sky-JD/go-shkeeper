@@ -116,6 +116,51 @@ func TestConfigCompatibilityEndpointsUseMariaDB(t *testing.T) {
 	}
 }
 
+func TestExchangeRateEndpointCreatesMissingRateRow(t *testing.T) {
+	store, cfg := testStore(t)
+	defer store.Close()
+	cfg.CryptoAllowList = []string{"BTC"}
+	ctx := t.Context()
+	if err := store.EnsureWallet(ctx, "BTC", "test-api-key"); err != nil {
+		t.Fatalf("ensure wallet: %v", err)
+	}
+	setAdminPassword(t, store, cfg, "admin-password")
+	handler := newTestHTTPHandler(t, store, cfg)
+
+	res := adminJSON(t, handler, http.MethodPost, "/api/v1/BTC/exchange-rate", map[string]any{
+		"fiat":   "USD",
+		"source": "manual",
+		"rate":   "65000",
+		"fee":    "1.5",
+	})
+	if res.Code != http.StatusOK {
+		t.Fatalf("exchange-rate status=%d body=%s", res.Code, res.Body.String())
+	}
+	rate, err := store.ExchangeRate(ctx, "USD", "BTC")
+	if err != nil {
+		t.Fatalf("missing exchange rate row was not created: %v", err)
+	}
+	if rate.Source != "manual" || !rate.Rate.Equal(decimal.NewFromInt(65000)) || !rate.Fee.Equal(decimal.RequireFromString("1.5")) {
+		t.Fatalf("exchange rate was not persisted: %+v", rate)
+	}
+}
+
+func TestExchangeRateReadBackfillsMissingRateRow(t *testing.T) {
+	store, _ := testStore(t)
+	defer store.Close()
+
+	rate, err := store.ExchangeRate(t.Context(), "USD", "BNB")
+	if err != nil {
+		t.Fatalf("missing exchange rate row was not backfilled: %v", err)
+	}
+	if rate.Crypto != "BNB" || rate.Fiat != "USD" || rate.Source != "dynamic" {
+		t.Fatalf("unexpected default rate row: %+v", rate)
+	}
+	if !rate.Fee.Equal(decimal.NewFromInt(2)) || rate.FeePolicy != "PERCENT_FEE" {
+		t.Fatalf("unexpected default fee settings: %+v", rate)
+	}
+}
+
 func adminJSON(t *testing.T, handler *HTTPHandler, method, path string, payload any) *httptest.ResponseRecorder {
 	t.Helper()
 	var body *bytes.Reader

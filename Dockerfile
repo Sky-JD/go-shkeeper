@@ -1,9 +1,18 @@
+FROM node:24-alpine AS admin-ui
+
+WORKDIR /src/web/admin
+COPY web/admin/package*.json ./
+RUN npm ci
+COPY web/admin ./
+RUN npm run build
+
 FROM golang:1.24-alpine AS build
 
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
+COPY --from=admin-ui /src/internal/app/admin_dist ./internal/app/admin_dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/shkeeper ./cmd/shkeeper \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/chain-worker ./cmd/chain-worker \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/admin-account ./cmd/admin-account \

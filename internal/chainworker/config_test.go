@@ -3,6 +3,7 @@ package chainworker
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfigMariaDBDatabaseURLTakesPrecedence(t *testing.T) {
@@ -147,6 +148,44 @@ func TestLoadConfigDatabasePoolSettings(t *testing.T) {
 	}
 	if cfg.DBConnMaxIdleTime.String() != "9s" || cfg.DBConnMaxLifetime.String() != "19s" {
 		t.Fatalf("unexpected db connection durations: idle=%s lifetime=%s", cfg.DBConnMaxIdleTime, cfg.DBConnMaxLifetime)
+	}
+}
+
+func TestLoadConfigEVMDepositScannerSettings(t *testing.T) {
+	t.Setenv("CHAIN_MODULE", "BNB")
+	t.Setenv("MARIADB_DATABASE_URL", "")
+	t.Setenv("DATABASE_URL", "mariadb://user:pass@mariadb:3306/shkeeper")
+	t.Setenv("SHKEEPER_API_BASE_URL", "")
+	t.Setenv("SHKEEPER_BASE_URL", "http://go-shkeeper:5000")
+	t.Setenv("EVM_DEPOSIT_SCAN_ENABLED", "false")
+	t.Setenv("EVM_DEPOSIT_SCAN_INTERVAL_SECONDS", "7")
+	t.Setenv("EVM_DEPOSIT_SCAN_MAX_INVOICE_AGE_SECONDS", "3600")
+	t.Setenv("EVM_DEPOSIT_SCAN_BATCH_SIZE", "12")
+	t.Setenv("EVM_DEPOSIT_SCAN_BLOCK_STEP", "99")
+	t.Setenv("EVM_DEPOSIT_SCAN_ADDRESS_BATCH_SIZE", "4")
+	t.Setenv("EVM_DEPOSIT_SCAN_MIN_CONFIRMATIONS", "3")
+	t.Setenv("EVM_DEPOSIT_SCAN_START_MARGIN_SECONDS", "60")
+	t.Setenv("EVM_DEPOSIT_DISPATCH_INTERVAL_SECONDS", "2")
+	t.Setenv("EVM_DEPOSIT_DISPATCH_BATCH_SIZE", "33")
+	t.Setenv("EVM_DEPOSIT_DISPATCH_CONCURRENCY", "6")
+	t.Setenv("EVM_DEPOSIT_EVENT_MAX_ATTEMPTS", "9")
+	t.Setenv("EVM_AVERAGE_BLOCK_SECONDS", "5")
+
+	cfg := LoadConfig()
+	if cfg.DepositScanEnabled {
+		t.Fatalf("scanner should be disabled by env")
+	}
+	if cfg.DepositScanInterval != 7*time.Second || cfg.DepositScanMaxInvoiceAge != time.Hour || cfg.DepositScanStartMargin != time.Minute {
+		t.Fatalf("unexpected scanner durations: interval=%s age=%s margin=%s", cfg.DepositScanInterval, cfg.DepositScanMaxInvoiceAge, cfg.DepositScanStartMargin)
+	}
+	if cfg.DepositScanBatchSize != 12 || cfg.DepositScanBlockStep != 99 || cfg.DepositScanAddressTopicBatch != 4 || cfg.DepositScanMinConfirmations != 3 || cfg.EVMAverageBlockSeconds != 5 {
+		t.Fatalf("unexpected scanner numeric settings: %+v", cfg)
+	}
+	if cfg.DepositDispatchInterval != 2*time.Second || cfg.DepositDispatchBatchSize != 33 || cfg.DepositDispatchConcurrency != 6 || cfg.DepositEventMaxAttempts != 9 {
+		t.Fatalf("unexpected dispatcher settings: %+v", cfg)
+	}
+	if cfg.ShkeeperAPIBaseURL != "http://go-shkeeper:5000/api/v1" {
+		t.Fatalf("unexpected shkeeper api base url: %s", cfg.ShkeeperAPIBaseURL)
 	}
 }
 

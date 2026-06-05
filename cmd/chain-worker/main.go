@@ -33,9 +33,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	worker := chainworker.NewServer(cfg, store, logger)
+	worker.StartBackground(ctx)
+
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           chainworker.NewServer(cfg, store, logger).Routes(),
+		Handler:           worker.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.RequestTimeout,
 		WriteTimeout:      cfg.RequestTimeout,

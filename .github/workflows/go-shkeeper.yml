@@ -117,7 +117,7 @@ jobs:
 
       - name: Reject active SQLite and Python source
         run: |
-          scan_files="contrib/shkeeper-change-password.sh Dockerfile docker-compose.example.yml deploy/install.sh deploy/shkeeperctl.sh deploy/hk-16-16-staging-rehearsal.sh deploy/hk-16-16-production-cutover.sh deploy/hk-16-16-final-readiness.sh deploy/hk-16-16-async-final-readiness.sh deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml"
+          scan_files="contrib/shkeeper-change-password.sh Dockerfile docker-compose.example.yml deploy/hk-16-16-staging-rehearsal.sh deploy/hk-16-16-production-cutover.sh deploy/hk-16-16-final-readiness.sh deploy/hk-16-16-async-final-readiness.sh deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml"
           matches="$(grep -nE '(^|[[:space:];|&])(python|python3|pip|pip3|sqlite3)([[:space:];|&]|$)|sqlite://|shkeeper\.sqlite|requirements\.txt' $scan_files || true)"
           if [ -n "$matches" ]; then
             echo "$matches"
@@ -227,7 +227,7 @@ jobs:
 
           docker run --rm --network host mariadb:11.4 mariadb \
             -h127.0.0.1 -ushkeeper -pshkeeper go_shkeeper_test \
-            -e "UPDATE wallet SET apikey = 'ci-api-key'; UPDATE exchange_rate SET source = 'manual', rate = 10000, fee = 0, fixed_fee = 0, fee_policy = 'PERCENT_FEE' WHERE crypto = 'BTC' AND fiat = 'USD'; INSERT INTO invoice (crypto, addr, external_id, fiat, callback_url, balance_fiat, balance_crypto, amount_fiat, amount_crypto, exchange_rate, status) VALUES ('BTC', 'ci-btc-address', 'ci-unpaid-order', 'USD', 'https://example.invalid/callback', 0, 0, 10, 0.001, 10000, 'UNPAID'); INSERT INTO order_index (external_id, sort_at) SELECT external_id, updated_at FROM invoice WHERE external_id = 'ci-unpaid-order' ON DUPLICATE KEY UPDATE sort_at = VALUES(sort_at);"
+            -e "UPDATE wallet SET apikey = 'ci-api-key'; UPDATE exchange_rate SET source = 'manual', rate = 10000, fee = 0, fixed_fee = 0, fee_policy = 'PERCENT_FEE' WHERE crypto = 'BTC' AND fiat = 'USD'; INSERT INTO invoice (crypto, addr, external_id, fiat, callback_url, balance_fiat, balance_crypto, amount_fiat, amount_crypto, exchange_rate, status) VALUES ('BTC', 'ci-btc-address', 'ci-unpaid-order', 'USD', 'https://example.invalid/callback', 0, 0, 10, 0.001, 10000, 'UNPAID');"
 
           curl -fsS -H "X-Shkeeper-Api-Key: ci-api-key" \
             http://127.0.0.1:5000/api/v1/orders/ci-unpaid-order >/tmp/go-shkeeper-order.json
@@ -344,7 +344,6 @@ jobs:
             -e DEPLOY_CHECK_PLAN_FILE=/deploy-check.plan.json \
             -e DEPLOY_CHECK_REPORT_FILE=/tmp/go-shkeeper-deploy-check-report.json \
             go-shkeeper-ci /app/deploy-check
-          sudo chmod 0644 /tmp/go-shkeeper-deploy-check-report.json
 
           cat >/tmp/go-shkeeper-validate-report.go <<'EOF'
           package main
@@ -451,16 +450,16 @@ jobs:
             -e RELEASE_AUDIT_REQUIRE_IMPORT_SYNC=false \
             -e RELEASE_AUDIT_REQUIRE_PREFLIGHT=false \
             go-shkeeper-ci /app/release-audit
-          sudo chmod 0644 /tmp/go-shkeeper-release-audit.json
           grep -q '"status": "pass"' /tmp/go-shkeeper-release-audit.json
 
           docker run --rm \
-            go-shkeeper-ci /app/runtime-audit > /tmp/go-shkeeper-runtime-audit.json
-          sudo chmod 0644 /tmp/go-shkeeper-runtime-audit.json
+            -v /tmp:/deploy-reports \
+            go-shkeeper-ci sh -lc '/app/runtime-audit > /deploy-reports/go-shkeeper-runtime-audit.json'
           docker run --rm --network host \
+            -v /tmp:/deploy-reports \
             -e MARIADB_DATABASE_URL=mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test \
-            go-shkeeper-ci /app/cutover-preflight > /tmp/go-shkeeper-cutover-preflight.json
-          sudo chmod 0644 /tmp/go-shkeeper-cutover-preflight.json
+            -e CUTOVER_PREFLIGHT_OUTPUT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json \
+            go-shkeeper-ci /app/cutover-preflight
           docker stats --no-stream --format '{{json .}}' \
             go-shkeeper-smoke go-shkeeper-worker-smoke \
             > /tmp/go-shkeeper-container-stats.jsonl
@@ -477,7 +476,7 @@ jobs:
           }
           EOF
           docker run --rm \
-            -v /tmp:/deploy-reports:ro \
+            -v /tmp:/deploy-reports \
             -e GOAL_AUDIT_RUNTIME_AUDIT_FILE=/deploy-reports/go-shkeeper-runtime-audit.json \
             -e GOAL_AUDIT_PREFLIGHT_FILE=/deploy-reports/go-shkeeper-cutover-preflight.json \
             -e GOAL_AUDIT_READINESS_FILE=/deploy-reports/go-shkeeper-final-readiness.json \
@@ -490,8 +489,8 @@ jobs:
             -e GOAL_AUDIT_REQUIRE_STRICT_RELEASE_GATES=false \
             -e GOAL_AUDIT_FORBIDDEN_CONTAINERS=bnb-shkeeper,bnb_tasks,tron-shkeeper,tron_tasks \
             -e GOAL_AUDIT_EXPECTED_GO_IMAGE=go-shkeeper-ci \
-            go-shkeeper-ci /app/goal-audit > /tmp/go-shkeeper-goal-audit.json
-          sudo chmod 0644 /tmp/go-shkeeper-goal-audit.json
+            -e GOAL_AUDIT_OUTPUT_FILE=/deploy-reports/go-shkeeper-goal-audit.json \
+            go-shkeeper-ci /app/goal-audit
           grep -q '"status": "pass"' /tmp/go-shkeeper-goal-audit.json
 
           payment_rows="$(docker run --rm --network host mariadb:11.4 mariadb -N -B \
@@ -536,8 +535,6 @@ jobs:
               *_CONTRACT|*_MINT|*_TOKEN_PROGRAM|*_ADDRESS) value=0x0000000000000000000000000000000000000000 ;;
               *_TLS_SKIP_VERIFY) value=false ;;
               *_TOKEN_MIN_FEE_SOL) value=0.001 ;;
-              SHKEEPER_HOST) value=127.0.0.1 ;;
-              SHKEEPER_PORT) value=5000 ;;
               SHKEEPER_CRYPTOS) value=BTC ;;
               *) value=ci-placeholder ;;
             esac

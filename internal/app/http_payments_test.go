@@ -190,6 +190,42 @@ func TestPayoutInvalidCallbackDoesNotCallWorkerOrCreateRow(t *testing.T) {
 	}
 }
 
+func TestPayoutDisabledWalletDoesNotCallWorkerOrCreateRow(t *testing.T) {
+	store, cfg := testStore(t)
+	defer store.Close()
+	cfg.CryptoAllowList = []string{"BTC"}
+	ctx := t.Context()
+	if err := store.EnsureWallet(ctx, "BTC", "test-api-key"); err != nil {
+		t.Fatalf("ensure wallet: %v", err)
+	}
+	if err := store.SetWalletEnabled(ctx, "BTC", false); err != nil {
+		t.Fatalf("disable wallet: %v", err)
+	}
+	called := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer backend.Close()
+	t.Setenv("BTC_API_SERVER_HOST", strings.TrimPrefix(backend.URL, "http://"))
+	setAdminPassword(t, store, cfg, "admin-password")
+	handler := newTestHTTPHandler(t, store, cfg)
+
+	res := adminJSON(t, handler, http.MethodPost, "/api/v1/BTC/payout", map[string]any{
+		"destination": "bc1disabled",
+		"amount":      "1",
+		"external_id": "payout-disabled-wallet",
+	})
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("payout status=%d body=%s", res.Code, res.Body.String())
+	}
+	if called {
+		t.Fatalf("worker was called for disabled wallet")
+	}
+	if _, err := store.PayoutByExternalID(ctx, "BTC", "payout-disabled-wallet"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("disabled wallet payout row should not exist: %v", err)
+	}
+}
+
 func TestMultiPayoutDuplicateExternalIDDoesNotCallWorkerOrCreateRows(t *testing.T) {
 	store, cfg := testStore(t)
 	defer store.Close()
@@ -266,5 +302,18 @@ func TestWalletNotifyRecordsOutgoingTransaction(t *testing.T) {
 	tx := order.Invoices[0].Transactions[0]
 	if tx.NeedMoreConfirmations || !tx.CallbackConfirmed || !tx.AmountFiat.Equal(decimal.RequireFromString("12")) {
 		t.Fatalf("unexpected outgoing transaction: %+v", tx)
+	}
+}
+
+func TestValidBackendKeyFallsBackToGlobalKey(t *testing.T) {
+	t.Setenv("SHKEEPER_BNB_USDT_BACKEND_KEY", "")
+	t.Setenv("SHKEEPER_BTC_BACKEND_KEY", "")
+	t.Setenv("SHKEEPER_BACKEND_KEY", "global-backend")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/walletnotify/BNB-USDT/tx", nil)
+	req.Header.Set("X-Shkeeper-Backend-Key", "global-backend")
+	handler := &HTTPHandler{}
+	if !handler.validBackendKey(req, &CryptoModule{Name: "BNB-USDT"}) {
+		t.Fatalf("global backend key should be accepted when module-specific key is unset")
 	}
 }

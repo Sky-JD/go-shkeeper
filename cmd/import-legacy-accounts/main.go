@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,7 +41,7 @@ func main() {
 		os.Exit(1)
 	}
 	cfg.AccountPassword = accountPassword
-	legacyPassword, err := legacyAccountPassword(cfg)
+	legacyPassword, legacyPasswordExplicit, err := configuredLegacyAccountPassword()
 	if err != nil {
 		logger.Error("read legacy account password", "error", err)
 		os.Exit(1)
@@ -59,21 +60,7 @@ func main() {
 		logger.Error("read legacy accounts database URL", "error", err)
 		os.Exit(1)
 	}
-	var report chainworker.LegacyAccountImportReport
-	if legacyDatabaseURL != "" {
-		report, err = chainworker.ImportLegacyAccountsMariaDB(ctx, store, legacyDatabaseURL, opts)
-	} else {
-		input := os.Stdin
-		if len(os.Args) > 1 && os.Args[1] != "-" {
-			input, err = os.Open(os.Args[1])
-			if err != nil {
-				logger.Error("open legacy accounts json", "path", os.Args[1], "error", err)
-				os.Exit(1)
-			}
-			defer input.Close()
-		}
-		report, err = chainworker.ImportLegacyAccountsJSON(ctx, store, input, opts)
-	}
+	report, err := importLegacyAccounts(ctx, store, cfg, legacyDatabaseURL, os.Args[1:], opts, !legacyPasswordExplicit)
 	if err != nil {
 		logger.Error("import legacy accounts", "error", err)
 		os.Exit(1)
@@ -82,6 +69,62 @@ func main() {
 		logger.Error("write report", "error", err)
 		os.Exit(1)
 	}
+}
+
+func importLegacyAccounts(ctx context.Context, store *chainworker.Store, cfg chainworker.Config, legacyDatabaseURL string, args []string, opts chainworker.LegacyAccountImportOptions, allowLegacyPasswordFetch bool) (chainworker.LegacyAccountImportReport, error) {
+	if legacyDatabaseURL != "" {
+		return importWithLegacyPasswordRetry(cfg, opts, allowLegacyPasswordFetch, func(attemptOpts chainworker.LegacyAccountImportOptions) (chainworker.LegacyAccountImportReport, error) {
+			return chainworker.ImportLegacyAccountsMariaDB(ctx, store, legacyDatabaseURL, attemptOpts)
+		})
+	}
+	input := os.Stdin
+	if len(args) > 0 && args[0] != "-" {
+		file, err := os.Open(args[0])
+		if err != nil {
+			return chainworker.LegacyAccountImportReport{}, fmt.Errorf("open legacy accounts json %s: %w", args[0], err)
+		}
+		defer file.Close()
+		input = file
+	}
+	data, err := io.ReadAll(input)
+	if err != nil {
+		return chainworker.LegacyAccountImportReport{}, err
+	}
+	return importWithLegacyPasswordRetry(cfg, opts, allowLegacyPasswordFetch, func(attemptOpts chainworker.LegacyAccountImportOptions) (chainworker.LegacyAccountImportReport, error) {
+		return chainworker.ImportLegacyAccountsJSON(ctx, store, bytes.NewReader(data), attemptOpts)
+	})
+}
+
+type legacyAccountImportAttempt func(chainworker.LegacyAccountImportOptions) (chainworker.LegacyAccountImportReport, error)
+
+func importWithLegacyPasswordRetry(cfg chainworker.Config, opts chainworker.LegacyAccountImportOptions, allowLegacyPasswordFetch bool, attempt legacyAccountImportAttempt) (chainworker.LegacyAccountImportReport, error) {
+	report, err := attempt(opts)
+	if err == nil || !allowLegacyPasswordFetch || !shouldRetryWithLegacyAccountPassword(err) {
+		return report, err
+	}
+	legacyPassword, fetchErr := legacyAccountPassword(cfg)
+	if fetchErr != nil {
+		return report, fetchErr
+	}
+	if strings.TrimSpace(legacyPassword) == "" || legacyPassword == opts.LegacyAccountPassword {
+		return report, err
+	}
+	opts.LegacyAccountPassword = legacyPassword
+	return attempt(opts)
+}
+
+func configuredLegacyAccountPassword() (string, bool, error) {
+	explicit := strings.TrimSpace(os.Getenv("LEGACY_ACCOUNT_PASSWORD")) != "" || strings.TrimSpace(os.Getenv("LEGACY_ACCOUNT_PASSWORD_FILE")) != ""
+	password, err := secretFromEnv("LEGACY_ACCOUNT_PASSWORD", "")
+	return password, explicit, err
+}
+
+func shouldRetryWithLegacyAccountPassword(err error) bool {
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "legacy account password") ||
+		strings.Contains(text, "legacy fernet") ||
+		strings.Contains(text, "legacy secret") ||
+		strings.Contains(text, "signature mismatch")
 }
 
 func legacyAccountPassword(cfg chainworker.Config) (string, error) {

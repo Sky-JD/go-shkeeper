@@ -18,21 +18,40 @@ import (
 )
 
 type Server struct {
-	cfg     Config
-	store   *Store
-	logger  *slog.Logger
-	client  *http.Client
-	nodeMu  sync.RWMutex
-	nodeURL string
+	cfg                 Config
+	store               *Store
+	logger              *slog.Logger
+	client              *http.Client
+	nodeMu              sync.RWMutex
+	nodeURL             string
+	latestBlockMu       sync.RWMutex
+	latestBlockAt       time.Time
+	latestBlockCachedAt time.Time
+	tronSpendableMu     sync.RWMutex
+	tronSpendableCache  map[string]tronSpendableCacheEntry
+	tronRefreshMu       sync.Mutex
+	tronRefreshing      map[string]bool
 }
 
 func NewServer(cfg Config, store *Store, logger *slog.Logger) *Server {
 	return &Server{
-		cfg:     cfg,
-		store:   store,
-		logger:  logger,
-		client:  &http.Client{Timeout: cfg.RequestTimeout},
-		nodeURL: cfg.FullnodeURL,
+		cfg:                cfg,
+		store:              store,
+		logger:             logger,
+		client:             &http.Client{Timeout: cfg.RequestTimeout},
+		nodeURL:            cfg.FullnodeURL,
+		tronSpendableCache: map[string]tronSpendableCacheEntry{},
+		tronRefreshing:     map[string]bool{},
+	}
+}
+
+func (s *Server) StartBackground(ctx context.Context) {
+	if s.cfg.Module == "TRON" && boolEnv("TRON_BALANCE_CACHE_ENABLED", true) {
+		go s.tronSpendableRefreshLoop(ctx)
+	}
+	if s.isEVMModule() && s.cfg.DepositScanEnabled {
+		go s.evmDepositScanLoop(ctx)
+		go s.evmDepositDispatchLoop(ctx)
 	}
 }
 
@@ -60,8 +79,12 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/{crypto}/addresses", s.addresses)
 		r.Post("/{crypto}/get_all_addresses", s.addresses)
 		r.Get("/{crypto}/get_all_addresses", s.addresses)
+		r.Get("/{crypto}/spendable", s.spendable)
+		r.Post("/{crypto}/spendable", s.spendable)
 		r.Get("/{crypto}/dump", s.dumpAccounts)
 		r.Post("/{crypto}/dump", s.dumpAccounts)
+		r.Get("/{crypto}/activation-status", s.activationStatus)
+		r.Post("/{crypto}/activation-status", s.activationStatus)
 		r.Post("/{crypto}/status", s.status)
 		r.Post("/{crypto}/balance", s.balance)
 		r.Post("/{crypto}/calc-tx-fee/{amount}", s.calcTxFee)
@@ -73,6 +96,7 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/{crypto}/multipayout", s.multipayout)
 		r.Post("/{crypto}/transaction/{txid}", s.transaction)
 		r.Get("/{crypto}/transaction/{txid}", s.transaction)
+		r.Post("/{crypto}/deposit-event", s.depositEvent)
 		r.Post("/{crypto}/task/{id}", s.task)
 		r.Get("/{crypto}/multiserver/status", s.tronMultiserverStatus)
 		r.Post("/{crypto}/multiserver/change/{server_id}", s.tronMultiserverChange)
@@ -348,17 +372,10 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.cfg.Module == "SOL" {
-		accounts, err := s.store.ListAccounts(r.Context(), s.cfg.Module, crypto)
+		accounts, err := s.accountsForCrypto(r.Context(), crypto)
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, err)
 			return
-		}
-		if len(accounts) == 0 && !s.isNative(crypto) {
-			accounts, err = s.store.AccountsByModule(r.Context(), s.cfg.Module)
-			if err != nil {
-				errorJSON(w, http.StatusInternalServerError, err)
-				return
-			}
 		}
 		total := decimal.Zero
 		for _, account := range accounts {
@@ -370,12 +387,20 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"balance": total.String()})
 		return
 	}
-	accounts, err := s.store.ListAccounts(r.Context(), s.cfg.Module, crypto)
+	if s.cfg.Module == "TRON" {
+		_, _ = s.latestBlockTimestamp(r.Context())
+	}
+	total := decimal.Zero
+	if s.cfg.Module == "TRON" {
+		entry, ready, err := s.cachedTRONSpendable(r.Context(), crypto, queryBool(r, "refresh") || queryBool(r, "live"))
+		writeJSON(w, http.StatusOK, s.tronSpendablePayload(crypto, entry, ready, err))
+		return
+	}
+	accounts, err := s.accountsForCrypto(r.Context(), crypto)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err)
 		return
 	}
-	total := decimal.Zero
 	if s.isEVMModule() {
 		for _, account := range accounts {
 			value, err := s.bnbBalance(r.Context(), crypto, account.Address)
@@ -383,15 +408,77 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 				total = total.Add(value)
 			}
 		}
-	} else if s.cfg.Module == "TRON" {
-		for _, account := range accounts {
-			value, err := s.tronBalance(r.Context(), crypto, account.Address)
-			if err == nil {
-				total = total.Add(value)
-			}
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"balance": total.String()})
+}
+
+func (s *Server) spendable(w http.ResponseWriter, r *http.Request) {
+	crypto := strings.ToUpper(chi.URLParam(r, "crypto"))
+	if s.cfg.Module != "TRON" {
+		errorJSON(w, http.StatusNotFound, errors.New("spendable report is only implemented for TRON workers"))
+		return
+	}
+	entry, ready, err := s.cachedTRONSpendable(r.Context(), crypto, queryBool(r, "refresh") || queryBool(r, "live"))
+	writeJSON(w, http.StatusOK, s.tronSpendablePayload(crypto, entry, ready, err))
+}
+
+func (s *Server) tronSpendablePayload(crypto string, entry tronSpendableCacheEntry, ready bool, err error) map[string]any {
+	report := entry.Report
+	payload := map[string]any{
+		"status":             "success",
+		"crypto":             crypto,
+		"balance":            report.Total.String(),
+		"max_single_account": report.Max.String(),
+		"account":            report.MaxAddress,
+		"account_count":      report.AccountCount,
+		"checked":            report.Checked,
+		"failed":             report.Failed,
+		"cache_ready":        ready,
+		"refreshing":         s.tronRefreshInProgress(crypto),
+		"balance_source":     "wallet_cache",
+	}
+	if !entry.RefreshedAt.IsZero() {
+		age := int64(time.Since(entry.RefreshedAt).Seconds())
+		if age < 0 {
+			age = 0
+		}
+		payload["refreshed_at"] = entry.RefreshedAt.Format(time.RFC3339)
+		payload["cache_age_seconds"] = age
+		payload["cache_stale"] = tronSpendableCacheEntryStale(entry)
+	} else {
+		payload["balance_source"] = "warming"
+		payload["cache_stale"] = true
+	}
+	if entry.LastError != "" {
+		payload["balance_error"] = entry.LastError
+		if !entry.LastErrorAt.IsZero() {
+			payload["last_error_at"] = entry.LastErrorAt.Format(time.RFC3339)
+		}
+	}
+	if err != nil {
+		payload["balance_error"] = err.Error()
+	}
+	if !ready {
+		existing, _ := payload["balance_error"].(string)
+		payload["balance_error"] = firstNonEmpty(existing, "TRON balance cache is warming up")
+	}
+	return payload
+}
+
+func queryBool(r *http.Request, key string) bool {
+	value := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key)))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
+}
+
+func (s *Server) accountsForCrypto(ctx context.Context, crypto string) ([]Account, error) {
+	accounts, err := s.store.ListAccounts(ctx, s.cfg.Module, crypto)
+	if err != nil {
+		return nil, err
+	}
+	if len(accounts) == 0 && !s.isNative(crypto) {
+		accounts, err = s.store.AccountsByModule(ctx, s.cfg.Module)
+	}
+	return accounts, err
 }
 
 func (s *Server) calcTxFee(w http.ResponseWriter, r *http.Request) {
@@ -744,15 +831,41 @@ func (s *Server) latestBlockTimestamp(ctx context.Context) (time.Time, error) {
 			} `json:"block_header"`
 		}
 		if err := s.httpJSON(ctx, http.MethodPost, strings.TrimRight(s.fullnodeURL(), "/")+"/wallet/getnowblock", nil, &block); err != nil {
+			if cached, ok := s.cachedLatestBlockTimestamp(30 * time.Second); ok {
+				return cached, nil
+			}
 			return time.Time{}, err
 		}
 		if block.BlockHeader.RawData.Timestamp <= 0 {
 			return time.Time{}, errors.New("tron fullnode returned no block timestamp")
 		}
-		return time.UnixMilli(block.BlockHeader.RawData.Timestamp), nil
+		ts := time.UnixMilli(block.BlockHeader.RawData.Timestamp)
+		s.rememberLatestBlockTimestamp(ts)
+		return ts, nil
 	default:
 		return time.Time{}, fmt.Errorf("unsupported chain module: %s", s.cfg.Module)
 	}
+}
+
+func (s *Server) rememberLatestBlockTimestamp(ts time.Time) {
+	if ts.IsZero() {
+		return
+	}
+	s.latestBlockMu.Lock()
+	s.latestBlockAt = ts
+	s.latestBlockCachedAt = time.Now()
+	s.latestBlockMu.Unlock()
+}
+
+func (s *Server) cachedLatestBlockTimestamp(maxAge time.Duration) (time.Time, bool) {
+	s.latestBlockMu.RLock()
+	ts := s.latestBlockAt
+	cachedAt := s.latestBlockCachedAt
+	s.latestBlockMu.RUnlock()
+	if ts.IsZero() || cachedAt.IsZero() || time.Since(cachedAt) > maxAge {
+		return time.Time{}, false
+	}
+	return ts, true
 }
 
 func (s *Server) nativeBalance(ctx context.Context, address string) (decimal.Decimal, error) {

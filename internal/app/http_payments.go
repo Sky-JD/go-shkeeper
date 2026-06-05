@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -236,6 +237,10 @@ func (h *HTTPHandler) apiPayout(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, statusForPayoutValidationErr(err), err)
 		return
 	}
+	if err := h.requirePayoutWalletReady(r.Context(), module); err != nil {
+		errorJSON(w, statusForPayoutReadinessErr(err), err)
+		return
+	}
 	payout := Payout{
 		Amount:      prepared.Amount,
 		Crypto:      module.Name,
@@ -283,6 +288,10 @@ func (h *HTTPHandler) apiMultiPayout(w http.ResponseWriter, r *http.Request) {
 	prepared, err := h.prepareMultiPayoutRequests(r, module, req)
 	if err != nil {
 		errorJSON(w, statusForPayoutValidationErr(err), err)
+		return
+	}
+	if err := h.requirePayoutWalletReady(r.Context(), module); err != nil {
+		errorJSON(w, statusForPayoutReadinessErr(err), err)
 		return
 	}
 	created := make([]Payout, 0, len(prepared))
@@ -342,6 +351,22 @@ type preparedPayoutRequest struct {
 	ExternalID  string
 	CallbackURL string
 	Raw         map[string]any
+}
+
+var errPayoutWalletUnavailable = errors.New("payout wallet unavailable")
+
+func (h *HTTPHandler) requirePayoutWalletReady(ctx context.Context, module *CryptoModule) error {
+	wallet, err := h.store.WalletByCrypto(ctx, module.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %s wallet is not configured", errPayoutWalletUnavailable, module.Name)
+	}
+	if err != nil {
+		return err
+	}
+	if !wallet.Enabled {
+		return fmt.Errorf("%w: %s wallet is disabled", errPayoutWalletUnavailable, module.Name)
+	}
+	return nil
 }
 
 func (h *HTTPHandler) preparePayoutRequest(r *http.Request, module *CryptoModule, req map[string]any) (preparedPayoutRequest, error) {
@@ -431,6 +456,13 @@ func statusForPayoutValidationErr(err error) int {
 	return http.StatusBadRequest
 }
 
+func statusForPayoutReadinessErr(err error) int {
+	if errors.Is(err, errPayoutWalletUnavailable) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 func payoutCreateError(externalID string, err error) (int, error) {
 	if externalID != "" && (isDuplicateSchemaError(err) || strings.Contains(strings.ToLower(err.Error()), "unique")) {
 		return http.StatusConflict, fmt.Errorf("Payout with this external_id already exists: %s", externalID)
@@ -491,6 +523,9 @@ func (h *HTTPHandler) validBackendKey(r *http.Request, module *CryptoModule) boo
 		return false
 	}
 	specific := os.Getenv("SHKEEPER_" + strings.ReplaceAll(module.Name, "-", "_") + "_BACKEND_KEY")
+	if specific == "" {
+		specific = os.Getenv("SHKEEPER_BACKEND_KEY")
+	}
 	if specific == "" {
 		specific = os.Getenv("SHKEEPER_BTC_BACKEND_KEY")
 	}

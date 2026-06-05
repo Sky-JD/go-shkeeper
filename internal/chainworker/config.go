@@ -12,54 +12,82 @@ import (
 )
 
 type Config struct {
-	Module            string
-	ListenAddr        string
-	DatabaseURL       string
-	DatabaseDSN       string
-	DatabaseError     string
-	FullnodeURL       string
-	FullnodeURLs      []string
-	WalletRPCURL      string
-	EVMChainID        int64
-	RPCUsername       string
-	RPCPassword       string
-	WalletRPCUser     string
-	WalletRPCPass     string
-	Username          string
-	Password          string
-	AccountPassword   string
-	BackendKey        string
-	RequestTimeout    time.Duration
-	DBMaxOpenConns    int
-	DBMaxIdleConns    int
-	DBConnMaxIdleTime time.Duration
-	DBConnMaxLifetime time.Duration
-	LogLevel          slog.Level
+	Module                       string
+	ListenAddr                   string
+	DatabaseURL                  string
+	DatabaseDSN                  string
+	DatabaseError                string
+	FullnodeURL                  string
+	FullnodeURLs                 []string
+	WalletRPCURL                 string
+	EVMChainID                   int64
+	RPCUsername                  string
+	RPCPassword                  string
+	WalletRPCUser                string
+	WalletRPCPass                string
+	Username                     string
+	Password                     string
+	AccountPassword              string
+	BackendKey                   string
+	RequestTimeout               time.Duration
+	DBMaxOpenConns               int
+	DBMaxIdleConns               int
+	DBConnMaxIdleTime            time.Duration
+	DBConnMaxLifetime            time.Duration
+	DepositScanEnabled           bool
+	DepositScanInterval          time.Duration
+	DepositScanMaxInvoiceAge     time.Duration
+	DepositScanBatchSize         int
+	DepositScanBlockStep         int64
+	DepositScanAddressTopicBatch int
+	DepositScanMinConfirmations  int64
+	DepositScanStartMargin       time.Duration
+	DepositDispatchInterval      time.Duration
+	DepositDispatchBatchSize     int
+	DepositDispatchConcurrency   int
+	DepositEventMaxAttempts      int
+	EVMAverageBlockSeconds       int64
+	ShkeeperAPIBaseURL           string
+	LogLevel                     slog.Level
 }
 
 func LoadConfig() Config {
 	module := strings.ToUpper(env("CHAIN_MODULE", "BNB"))
 	cfg := Config{
-		Module:            module,
-		ListenAddr:        env("CHAIN_WORKER_LISTEN", ":6000"),
-		DatabaseURL:       firstNonEmpty(os.Getenv("MARIADB_DATABASE_URL"), os.Getenv("DATABASE_URL"), "mariadb://shkeeper:shkeeper@mariadb:3306/shkeeper"),
-		FullnodeURL:       defaultFullnode(module),
-		WalletRPCURL:      env("WALLET_RPC_URL", defaultWalletRPC(module)),
-		EVMChainID:        int64Env("EVM_CHAIN_ID", defaultEVMChainID(module)),
-		RPCUsername:       firstEnv("RPC_USERNAME", module+"_RPC_USERNAME", module+"_NODE_USERNAME"),
-		RPCPassword:       firstEnv("RPC_PASSWORD", module+"_RPC_PASSWORD", module+"_NODE_PASSWORD"),
-		WalletRPCUser:     firstEnv("WALLET_RPC_USERNAME", module+"_WALLET_RPC_USERNAME"),
-		WalletRPCPass:     firstEnv("WALLET_RPC_PASSWORD", module+"_WALLET_RPC_PASSWORD"),
-		Username:          firstNonEmpty(firstEnv(workerAuthEnvKeys(module, "USERNAME")...), strings.ToLower(module)),
-		Password:          firstNonEmpty(firstEnv(workerAuthEnvKeys(module, "PASSWORD")...), randomToken(24)),
-		AccountPassword:   env("ACCOUNT_PASSWORD", randomToken(32)),
-		BackendKey:        env("SHKEEPER_BACKEND_KEY", randomToken(32)),
-		RequestTimeout:    secondsEnv("REQUESTS_TIMEOUT", 20),
-		DBMaxOpenConns:    intEnv("DB_MAX_OPEN_CONNS", 16),
-		DBMaxIdleConns:    intEnv("DB_MAX_IDLE_CONNS", 8),
-		DBConnMaxIdleTime: secondsEnv("DB_CONN_MAX_IDLE_SECONDS", 180),
-		DBConnMaxLifetime: secondsEnv("DB_CONN_MAX_LIFETIME_SECONDS", 1800),
-		LogLevel:          parseLogLevel(env("LOG_LEVEL", "info")),
+		Module:                       module,
+		ListenAddr:                   env("CHAIN_WORKER_LISTEN", ":6000"),
+		DatabaseURL:                  firstNonEmpty(os.Getenv("MARIADB_DATABASE_URL"), os.Getenv("DATABASE_URL"), "mariadb://shkeeper:shkeeper@mariadb:3306/shkeeper"),
+		FullnodeURL:                  defaultFullnode(module),
+		WalletRPCURL:                 env("WALLET_RPC_URL", defaultWalletRPC(module)),
+		EVMChainID:                   int64Env("EVM_CHAIN_ID", defaultEVMChainID(module)),
+		RPCUsername:                  firstEnv("RPC_USERNAME", module+"_RPC_USERNAME", module+"_NODE_USERNAME"),
+		RPCPassword:                  firstEnv("RPC_PASSWORD", module+"_RPC_PASSWORD", module+"_NODE_PASSWORD"),
+		WalletRPCUser:                firstEnv("WALLET_RPC_USERNAME", module+"_WALLET_RPC_USERNAME"),
+		WalletRPCPass:                firstEnv("WALLET_RPC_PASSWORD", module+"_WALLET_RPC_PASSWORD"),
+		Username:                     firstNonEmpty(firstEnv(workerAuthEnvKeys(module, "USERNAME")...), strings.ToLower(module)),
+		Password:                     firstNonEmpty(firstEnv(workerAuthEnvKeys(module, "PASSWORD")...), randomToken(24)),
+		AccountPassword:              env("ACCOUNT_PASSWORD", randomToken(32)),
+		BackendKey:                   env("SHKEEPER_BACKEND_KEY", randomToken(32)),
+		RequestTimeout:               secondsEnv("REQUESTS_TIMEOUT", 20),
+		DBMaxOpenConns:               intEnv("DB_MAX_OPEN_CONNS", 16),
+		DBMaxIdleConns:               intEnv("DB_MAX_IDLE_CONNS", 8),
+		DBConnMaxIdleTime:            secondsEnv("DB_CONN_MAX_IDLE_SECONDS", 180),
+		DBConnMaxLifetime:            secondsEnv("DB_CONN_MAX_LIFETIME_SECONDS", 1800),
+		DepositScanEnabled:           boolEnv("EVM_DEPOSIT_SCAN_ENABLED", true),
+		DepositScanInterval:          secondsEnv("EVM_DEPOSIT_SCAN_INTERVAL_SECONDS", 20),
+		DepositScanMaxInvoiceAge:     secondsEnv("EVM_DEPOSIT_SCAN_MAX_INVOICE_AGE_SECONDS", 7200),
+		DepositScanBatchSize:         intEnv("EVM_DEPOSIT_SCAN_BATCH_SIZE", 200000),
+		DepositScanBlockStep:         int64Env("EVM_DEPOSIT_SCAN_BLOCK_STEP", 500),
+		DepositScanAddressTopicBatch: intEnv("EVM_DEPOSIT_SCAN_ADDRESS_BATCH_SIZE", 100),
+		DepositScanMinConfirmations:  int64Env("EVM_DEPOSIT_SCAN_MIN_CONFIRMATIONS", 2),
+		DepositScanStartMargin:       secondsEnv("EVM_DEPOSIT_SCAN_START_MARGIN_SECONDS", 600),
+		DepositDispatchInterval:      secondsEnv("EVM_DEPOSIT_DISPATCH_INTERVAL_SECONDS", 2),
+		DepositDispatchBatchSize:     intEnv("EVM_DEPOSIT_DISPATCH_BATCH_SIZE", 200),
+		DepositDispatchConcurrency:   intEnv("EVM_DEPOSIT_DISPATCH_CONCURRENCY", 8),
+		DepositEventMaxAttempts:      intEnv("EVM_DEPOSIT_EVENT_MAX_ATTEMPTS", 20),
+		EVMAverageBlockSeconds:       int64Env("EVM_AVERAGE_BLOCK_SECONDS", defaultEVMAverageBlockSeconds(module)),
+		ShkeeperAPIBaseURL:           normalizeShkeeperAPIBaseURL(),
+		LogLevel:                     parseLogLevel(env("LOG_LEVEL", "info")),
 	}
 	if v := os.Getenv("FULLNODE_URL"); v != "" {
 		cfg.FullnodeURL = v
@@ -298,6 +326,33 @@ func defaultEVMChainID(module string) int64 {
 	default:
 		return 1
 	}
+}
+
+func defaultEVMAverageBlockSeconds(module string) int64 {
+	switch strings.ToUpper(module) {
+	case "ETH":
+		return 12
+	case "BNB":
+		return 3
+	case "MATIC", "AVAX", "ARBETH", "OPETH":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func normalizeShkeeperAPIBaseURL() string {
+	if value := strings.TrimSpace(os.Getenv("SHKEEPER_API_BASE_URL")); value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	if value := strings.TrimSpace(os.Getenv("SHKEEPER_BASE_URL")); value != "" {
+		value = strings.TrimRight(value, "/")
+		if strings.HasSuffix(value, "/api/v1") {
+			return value
+		}
+		return value + "/api/v1"
+	}
+	return "http://go-shkeeper:5000/api/v1"
 }
 
 func randomToken(bytes int) string {

@@ -53,6 +53,8 @@ Usage:
   bash deploy/shkeeperctl.sh configure
   bash deploy/shkeeperctl.sh install
   bash deploy/shkeeperctl.sh upgrade
+  bash deploy/shkeeperctl.sh pull-upgrade
+  bash deploy/shkeeperctl.sh source-upgrade /tmp/go-shkeeper-src.tgz
   bash deploy/shkeeperctl.sh uninstall
   bash deploy/shkeeperctl.sh start|stop|restart|status|logs|build
   bash deploy/shkeeperctl.sh show-cryptos
@@ -82,8 +84,12 @@ Environment:
   SHKEEPER_HOST             Default: 127.0.0.1
   SHKEEPER_PORT             Default: 5000
   SHKEEPER_INTERACTIVE      auto, 1, or 0. Default: auto
+  SHKEEPER_MANAGED_REDIS=1  Start/status the compose redis service. Default: off
   SHKEEPER_DRY_RUN=1        Print Docker/Git actions without running them
   SHKEEPER_SKIP_GIT_PULL=1  Skip git pull during upgrade
+  SHKEEPER_SOURCE_ARCHIVE   Source archive used by source-upgrade
+  SHKEEPER_KEEP_SOURCE_ARCHIVE=1 keeps source archive after source-upgrade
+  SHKEEPER_VERIFY_FRONTEND=0 skips rebuilt frontend marker check
   CONFIRM_UNINSTALL=GO_SHKEEPER is required for uninstall
   PURGE_DATA=1 CONFIRM_PURGE=DELETE_GO_SHKEEPER_DATA also removes compose volumes
 EOF
@@ -163,8 +169,7 @@ wallet_env_for_crypto() {
 
 evm_network_for_crypto() {
   case "$(normalize_crypto "$1")" in
-    # BNB is already part of the default compose file. Do not generate a new
-    # account password for existing BNB deployments during read-only commands.
+    BNB|BNB-USDT|BNB-USDC) printf '%s\n' "BNB" ;;
     ETH|ETH-USDT|ETH-USDC|ETH-PYUSD) printf '%s\n' "ETH" ;;
     MATIC|POLYGON-USDT|POLYGON-USDC) printf '%s\n' "POLYGON" ;;
     AVAX|AVALANCHE-USDT|AVALANCHE-USDC) printf '%s\n' "AVALANCHE" ;;
@@ -543,6 +548,14 @@ configure_evm_crypto_env() {
 configure_runtime_env_for_cryptos() {
   local crypto
   for crypto in $(split_crypto_lines "$@"); do
+    case "$(normalize_crypto "$crypto")" in
+      TRX|USDT|USDC)
+        ensure_env_config_value "TRON_ACCOUNT_PASSWORD" "TRON account password" "$(rand_hex 18)" 1
+        ;;
+      SOL|SOLANA-USDT|SOLANA-USDC|SOLANA-PYUSD)
+        ensure_env_config_value "SOLANA_ACCOUNT_PASSWORD" "SOLANA account password" "$(rand_hex 18)" 1
+        ;;
+    esac
     configure_evm_crypto_env "$crypto"
   done
 }
@@ -695,11 +708,14 @@ main_service() {
 
 infra_services() {
   local service
-  for service in mariadb redis; do
+  for service in mariadb; do
     if service_exists "$service"; then
       printf '%s\n' "$service"
     fi
   done
+  if [ "${SHKEEPER_MANAGED_REDIS:-0}" = "1" ] && service_exists redis; then
+    printf '%s\n' "redis"
+  fi
 }
 
 services_for_cryptos() {
@@ -768,8 +784,8 @@ ensure_compose_services_for_cryptos() {
 
 prepare_cryptos_for_enable() {
   local cryptos="$1"
-  ensure_compose_services_for_cryptos "$cryptos"
   configure_runtime_env_for_cryptos "$cryptos"
+  ensure_compose_services_for_cryptos "$cryptos"
   require_worker_services_available "$cryptos"
 }
 
@@ -1094,39 +1110,43 @@ EOF
 
 compose_build_selected() {
   require_env_file
-  local cryptos main
-  local -a workers=()
-  cryptos="$(current_cryptos)"
+  local main
   main="$(main_service)"
-  mapfile -t workers < <(services_for_cryptos "$cryptos")
-  compose build "$main" "${workers[@]}"
+  compose build "$main"
 }
 
 start_selected() {
   require_env_file
+  local include_infra="${1:-with-infra}"
   local cryptos main
   local -a infra=()
+  local -a up_args=("up" "-d" "--no-build")
   local -a workers=()
   cryptos="$(current_cryptos)"
   main="$(main_service)"
-  mapfile -t infra < <(infra_services)
+  if [ "$include_infra" = "with-infra" ]; then
+    mapfile -t infra < <(infra_services)
+  fi
   mapfile -t workers < <(services_for_cryptos "$cryptos")
 
   if [ "${#infra[@]}" -gt 0 ]; then
     compose up -d "${infra[@]}"
   fi
   if [ "${#workers[@]}" -gt 0 ]; then
-    compose up -d --no-deps "${workers[@]}"
+    compose "${up_args[@]}" --no-deps "${workers[@]}"
   fi
-  compose up -d --no-deps "$main"
+  compose "${up_args[@]}" --no-deps "$main"
   log "started $main with cryptos: $cryptos"
 }
 
 restart_main() {
   require_env_file
+  local no_build="${1:-}"
   local main
+  local -a args=("up" "-d" "--no-deps" "--force-recreate")
   main="$(main_service)"
-  compose up -d --no-deps --force-recreate "$main"
+  [ "$no_build" = "no-build" ] && args+=("--no-build")
+  compose "${args[@]}" "$main"
 }
 
 stop_unused_workers() {
@@ -1143,6 +1163,10 @@ stop_unused_workers() {
   done
 }
 
+is_git_worktree() {
+  git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 install_stack() {
   init_env
   if [ "${SHKEEPER_INSTALL_MANAGER:-1}" != "0" ]; then
@@ -1154,7 +1178,7 @@ install_stack() {
 
 upgrade_stack() {
   require_env_file
-  if [ -d "$ROOT_DIR/.git" ] && [ "${SHKEEPER_SKIP_GIT_PULL:-0}" != "1" ]; then
+  if is_git_worktree && [ "${SHKEEPER_SKIP_GIT_PULL:-0}" != "1" ]; then
     log "pulling latest source"
     if [ "$DRY_RUN" = "1" ]; then
       printf '[shkeeperctl] dry-run: git -C %q pull --ff-only\n' "$ROOT_DIR"
@@ -1164,6 +1188,114 @@ upgrade_stack() {
   fi
   compose_build_selected
   start_selected
+}
+
+apply_source_archive() {
+  local archive="$1"
+  [ -n "$archive" ] || die "源码归档路径不能为空"
+  [ -f "$archive" ] || die "源码归档不存在: $archive"
+
+  local backup_dir path
+  backup_dir="/tmp/go-shkeeper-preserve-$(date +%Y%m%d%H%M%S)"
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '[shkeeperctl] dry-run: preserve runtime files under %q and extract %q into %q\n' "$backup_dir" "$archive" "$ROOT_DIR"
+    return 0
+  fi
+
+  mkdir -p "$ROOT_DIR" "$backup_dir"
+  for path in .env docker-compose.example.yml secrets deploy-reports deploy/shkeeperctl.sh deploy/install.sh deploy/hk-docker-debug.sh; do
+    if [ -e "$ROOT_DIR/$path" ]; then
+      mkdir -p "$backup_dir/$(dirname "$path")"
+      cp -a "$ROOT_DIR/$path" "$backup_dir/$path"
+    fi
+  done
+
+  for path in cmd internal web deploy Dockerfile go.mod go.sum README.md .dockerignore .gitignore; do
+    rm -rf "$ROOT_DIR/$path"
+  done
+
+  log "extracting source archive: $archive"
+  tar -xzf "$archive" -C "$ROOT_DIR"
+
+  for path in .env docker-compose.example.yml secrets deploy-reports deploy/shkeeperctl.sh deploy/install.sh deploy/hk-docker-debug.sh; do
+    if [ -e "$backup_dir/$path" ]; then
+      rm -rf "$ROOT_DIR/$path"
+      mkdir -p "$(dirname "$ROOT_DIR/$path")"
+      cp -a "$backup_dir/$path" "$ROOT_DIR/$path"
+    fi
+  done
+  chmod +x "$ROOT_DIR"/deploy/*.sh >/dev/null 2>&1 || true
+  log "source archive applied; preserved runtime backup: $backup_dir"
+}
+
+ready_url() {
+  local port
+  port="$(env_get SHKEEPER_PORT || true)"
+  [ -n "$port" ] || port=5000
+  printf 'http://127.0.0.1:%s/readyz' "$port"
+}
+
+wait_ready() {
+  require_env_file
+  local url body
+  url="$(ready_url)"
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '[shkeeperctl] dry-run: wait for %q\n' "$url"
+    return 0
+  fi
+  log "waiting for $url"
+  for _ in $(seq 1 90); do
+    if command -v wget >/dev/null 2>&1; then
+      body="$(wget -qO- "$url" 2>/dev/null || true)"
+    else
+      body="$(curl -fsS "$url" 2>/dev/null || true)"
+    fi
+    if printf '%s' "$body" | grep -q '"status":"ready"'; then
+      log "readyz ok"
+      return 0
+    fi
+    sleep 2
+  done
+  die "readyz did not become ready: $url"
+}
+
+verify_frontend_markers() {
+  require_env_file
+  [ "${SHKEEPER_VERIFY_FRONTEND:-1}" != "0" ] || {
+    log "frontend marker verification skipped"
+    return 0
+  }
+  if [ "$DRY_RUN" = "1" ]; then
+    printf '[shkeeperctl] dry-run: verify frontend markers in main container\n'
+    return 0
+  fi
+  local main container
+  main="$(main_service)"
+  container="$(compose ps -q "$main" | head -n 1)"
+  [ -n "$container" ] || die "cannot find main container for $main"
+  docker exec "$container" sh -lc "strings /app/shkeeper | grep -q '/api/v1/admin/wallets' && strings /app/shkeeper | grep -q '/api/v1/admin/rates' && strings /app/shkeeper | grep -q '/api/v1/admin/cryptos' && strings /app/shkeeper | grep -q '/api/v1/admin/wallet-import'"
+  log "frontend markers found in $main"
+}
+
+source_upgrade_stack() {
+  local archive
+  archive="${1:-${SHKEEPER_SOURCE_ARCHIVE:-}}"
+  apply_source_archive "$archive"
+  SHKEEPER_SKIP_GIT_PULL=1 upgrade_stack
+  wait_ready
+  verify_frontend_markers
+  if [ "${SHKEEPER_KEEP_SOURCE_ARCHIVE:-0}" != "1" ] && [ "$DRY_RUN" != "1" ]; then
+    rm -f "$archive"
+    log "removed source archive: $archive"
+  fi
+  log "source_upgrade_ok root_dir=$ROOT_DIR"
+}
+
+pull_upgrade_stack() {
+  upgrade_stack
+  wait_ready
+  verify_frontend_markers
+  log "pull_upgrade_ok root_dir=$ROOT_DIR"
 }
 
 uninstall_stack() {
@@ -1215,8 +1347,9 @@ set_cryptos() {
   write_cryptos "$cryptos"
   set_wallet_envs enabled "$cryptos"
   stop_unused_workers "$cryptos"
-  start_selected
-  restart_main
+  start_selected no-infra
+  restart_main no-build
+  log "enabled cryptos: $cryptos"
 }
 
 enable_crypto() {
@@ -1229,8 +1362,8 @@ enable_crypto() {
   prepare_cryptos_for_enable "$next"
   write_cryptos "$next"
   set_wallet_envs enabled "$@"
-  start_selected
-  restart_main
+  start_selected no-infra
+  restart_main no-build
 }
 
 disable_crypto() {
@@ -1375,6 +1508,18 @@ panel_set_worker_serverkey() {
   worker_serverkey "$cryptos" "$username" "$file"
 }
 
+panel_source_upgrade() {
+  if [ -n "${SHKEEPER_SOURCE_ARCHIVE:-}" ]; then
+    source_upgrade_stack "$SHKEEPER_SOURCE_ARCHIVE"
+    return 0
+  fi
+  if is_git_worktree; then
+    pull_upgrade_stack
+    return 0
+  fi
+  die "当前目录不是 Git 仓库，无法自动拉取；请设置 SHKEEPER_SOURCE_ARCHIVE=/tmp/go-shkeeper-src.tgz 后再执行"
+}
+
 panel_uninstall() {
   local confirm purge
   confirm="$(panel_prompt "输入 GO_SHKEEPER 确认卸载" "")"
@@ -1411,8 +1556,9 @@ run_panel() {
  14) 写入 worker serverkey
  15) 显示配置摘要
  16) 安装/刷新 shkeeperctl 短命令
- 17) Docker debug
- 18) Final readiness
+ 17) Docker 调试
+ 18) 最终就绪检查
+ 19) 源码升级并验证
   0) 退出
 EOF
     printf '选择: ' >&2
@@ -1436,6 +1582,7 @@ EOF
       16) install_manager required; panel_pause ;;
       17) run_debug; panel_pause ;;
       18) run_readiness; panel_pause ;;
+      19) panel_source_upgrade; panel_pause ;;
       0) return 0 ;;
       *) printf '未知选项。\n' >&2; panel_pause ;;
     esac
@@ -1477,6 +1624,8 @@ case "$cmd" in
   configure) configure_stack ;;
   install) install_stack ;;
   upgrade) upgrade_stack ;;
+  pull-upgrade|auto-upgrade) pull_upgrade_stack ;;
+  source-upgrade) source_upgrade_stack "$@" ;;
   uninstall) uninstall_stack ;;
   start) start_selected ;;
   stop) require_env_file; compose stop "$@" ;;

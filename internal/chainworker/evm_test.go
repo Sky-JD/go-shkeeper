@@ -2,10 +2,15 @@ package chainworker
 
 import (
 	"encoding/hex"
+	"encoding/json"
+	"log/slog"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -58,6 +63,45 @@ func TestBNBTokenConfigEnvOverride(t *testing.T) {
 	}
 }
 
+func TestBNBTokenBalanceFallsBackToModuleAccounts(t *testing.T) {
+	store := testStore(t)
+	defer store.Close()
+	ctx := t.Context()
+	if err := store.AddAccount(ctx, &Account{
+		Module:        "BNB",
+		Crypto:        "BNB",
+		Address:       "0x000000000000000000000000000000000000dEaD",
+		PrivateKeyHex: "v1:test",
+	}); err != nil {
+		t.Fatalf("add bnb account: %v", err)
+	}
+	t.Setenv("BNB_USDT_CONTRACT", "0x0000000000000000000000000000000000000001")
+	t.Setenv("BNB_USDT_DECIMALS", "18")
+	fullnode := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode rpc request: %v", err)
+		}
+		if req.Method != "eth_call" {
+			t.Fatalf("unexpected rpc method: %s", req.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": "0x7ce66c50e2840000"})
+	}))
+	defer fullnode.Close()
+
+	cfg := Config{Module: "BNB", FullnodeURL: fullnode.URL, Username: "worker", Password: "secret", RequestTimeout: 5}
+	handler := NewServer(cfg, store, slog.New(slog.NewTextHandler(os.Stdout, nil))).Routes()
+	req := httptest.NewRequest(http.MethodPost, "/BNB-USDT/balance", nil)
+	req.SetBasicAuth("worker", "secret")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"balance":"9"`) {
+		t.Fatalf("balance status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
 func TestSignLegacyEVMTransaction(t *testing.T) {
 	to, err := evmAddressBytes("0x000000000000000000000000000000000000dead")
 	if err != nil {
@@ -83,5 +127,32 @@ func TestEVMTopicAddress(t *testing.T) {
 	topic := "0x000000000000000000000000000000000000000000000000000000000000dead"
 	if got := evmTopicAddress(topic); got != "0x000000000000000000000000000000000000dead" {
 		t.Fatalf("unexpected topic address: %s", got)
+	}
+}
+
+func TestEVMDepositScannerHelpers(t *testing.T) {
+	address := "0xf9e546a0a9e06a3de7ca7e1aae30f040819314a4"
+	wantTopic := "0x000000000000000000000000f9e546a0a9e06a3de7ca7e1aae30f040819314a4"
+	if got := evmTransferToTopic(address); got != wantTopic {
+		t.Fatalf("unexpected transfer topic: %s", got)
+	}
+	chunks := evmTopicChunks([]string{"a", "b", "c"}, 2)
+	if len(chunks) != 2 || len(chunks[0]) != 2 || len(chunks[1]) != 1 {
+		t.Fatalf("unexpected topic chunks: %+v", chunks)
+	}
+
+	server := NewServer(Config{
+		Module:                      "BNB",
+		DepositScanMinConfirmations: 1,
+		DepositScanStartMargin:      10 * time.Minute,
+		EVMAverageBlockSeconds:      3,
+	}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	if !server.evmDepositScannerOwnsCrypto("BNB-USDT") || server.evmDepositScannerOwnsCrypto("TRON-USDT") {
+		t.Fatalf("unexpected crypto ownership")
+	}
+	latestAt := time.Unix(1_000_000, 0)
+	fromBlock, toBlock := server.evmDepositScanBlockRange(1000, latestAt, latestAt.Add(-20*time.Minute))
+	if toBlock != 1000 || fromBlock <= 1 || fromBlock >= toBlock {
+		t.Fatalf("unexpected scan block range: %d..%d", fromBlock, toBlock)
 	}
 }

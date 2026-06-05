@@ -210,10 +210,34 @@ func (r *CryptoRegistry) Balance(ctx context.Context, c *CryptoModule) (decimal.
 	if err := r.backendJSON(ctx, c, http.MethodPost, "/"+c.Name+"/balance", nil, &payload); err != nil {
 		return decimal.Zero, "wallet_api", err.Error()
 	}
-	if amount, ok := decimalFromAny(payload["balance"]); ok {
-		return amount, "wallet_api", ""
+	source := strings.TrimSpace(anyString(payload["balance_source"]))
+	if source == "" {
+		source = "wallet_api"
 	}
-	return decimal.Zero, "wallet_api", "balance field is missing"
+	errText := strings.TrimSpace(anyString(payload["balance_error"]))
+	if amount, ok := decimalFromAny(payload["balance"]); ok {
+		return amount, source, errText
+	}
+	return decimal.Zero, source, firstNonEmptyString(errText, "balance field is missing")
+}
+
+func (r *CryptoRegistry) ActivationStatus(ctx context.Context, c *CryptoModule) map[string]any {
+	if c.Adapter == "jsonrpc" || c.Network != "TRX" {
+		return map[string]any{"required": false, "module": c.Network, "crypto": c.Name}
+	}
+	var payload map[string]any
+	path := "/" + c.Name + "/activation-status"
+	if err := r.backendJSON(ctx, c, http.MethodGet, path, nil, &payload); err != nil {
+		if err := r.backendJSON(ctx, c, http.MethodPost, path, nil, &payload); err != nil {
+			return map[string]any{
+				"required": true,
+				"module":   c.Network,
+				"crypto":   c.Name,
+				"error":    err.Error(),
+			}
+		}
+	}
+	return payload
 }
 
 func (r *CryptoRegistry) MakeAddress(ctx context.Context, c *CryptoModule, amount decimal.Decimal) (string, error) {
@@ -372,6 +396,29 @@ func (r *CryptoRegistry) FeeDepositAddress(ctx context.Context, c *CryptoModule)
 	return "", errors.New("fee deposit account response has no address")
 }
 
+func (r *CryptoRegistry) Spendable(ctx context.Context, c *CryptoModule) (map[string]any, error) {
+	if c.Adapter == "jsonrpc" {
+		balance, _, errText := r.Balance(ctx, c)
+		if errText != "" {
+			return nil, errors.New(errText)
+		}
+		return map[string]any{
+			"status":             "success",
+			"crypto":             c.Name,
+			"balance":            balance.String(),
+			"max_single_account": balance.String(),
+		}, nil
+	}
+	var payload map[string]any
+	path := "/" + c.Name + "/spendable"
+	if err := r.backendJSON(ctx, c, http.MethodGet, path, nil, &payload); err != nil {
+		if err := r.backendJSON(ctx, c, http.MethodPost, path, nil, &payload); err != nil {
+			return nil, err
+		}
+	}
+	return payload, nil
+}
+
 func (r *CryptoRegistry) EstimateTxFee(ctx context.Context, c *CryptoModule, amount decimal.Decimal, address string) (map[string]any, error) {
 	if c.Adapter == "jsonrpc" {
 		var resp struct {
@@ -399,6 +446,14 @@ func (r *CryptoRegistry) EstimateTxFee(ctx context.Context, c *CryptoModule, amo
 			"address":     address,
 		}, nil
 	}
+	if !supportsBackendFeeEstimate(c) {
+		return map[string]any{
+			"status":  "success",
+			"amount":  amount.String(),
+			"fee":     "0",
+			"address": address,
+		}, nil
+	}
 	path := "/" + c.Name + "/calc-tx-fee/" + url.PathEscape(amount.String())
 	if address != "" {
 		path += "?address=" + url.QueryEscape(address)
@@ -410,6 +465,18 @@ func (r *CryptoRegistry) EstimateTxFee(ctx context.Context, c *CryptoModule, amo
 		}
 	}
 	return payload, nil
+}
+
+func supportsBackendFeeEstimate(c *CryptoModule) bool {
+	if c.Network == "TRX" {
+		return true
+	}
+	switch c.Name {
+	case "BTC", "LTC", "DOGE", "FIRO", "FIRO-SPARK":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *CryptoRegistry) ServerDetails(ctx context.Context, c *CryptoModule) map[string]any {

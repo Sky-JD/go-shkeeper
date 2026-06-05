@@ -20,11 +20,12 @@ func (h *HTTPHandler) apiStatus(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusNotFound, err)
 		return
 	}
+	serverStatus := h.crypto.Status(r.Context(), module)
 	balance, source, balanceErr := h.crypto.Balance(r.Context(), module)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":           module.Name,
 		"amount":         balance.String(),
-		"server":         h.crypto.Status(r.Context(), module),
+		"server":         serverStatus,
 		"balance_source": source,
 		"balance_error":  balanceErr,
 	})

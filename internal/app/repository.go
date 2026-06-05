@@ -295,6 +295,12 @@ func (s *Store) ExchangeRate(ctx context.Context, fiat string, crypto string) (E
 		FROM %s WHERE fiat = ? AND crypto = ? LIMIT 1`, s.table("exchange_rate"))
 	var r ExchangeRate
 	err := s.db.QueryRowContext(ctx, q, fiat, crypto).Scan(&r.ID, &r.Source, &r.Crypto, &r.Fiat, &r.Rate, &r.Fee, &r.FixedFee, &r.FeePolicy)
+	if errors.Is(err, sql.ErrNoRows) {
+		if ensureErr := s.EnsureExchangeRate(ctx, crypto, fiat); ensureErr != nil {
+			return r, ensureErr
+		}
+		err = s.db.QueryRowContext(ctx, q, fiat, crypto).Scan(&r.ID, &r.Source, &r.Crypto, &r.Fiat, &r.Rate, &r.Fee, &r.FixedFee, &r.FeePolicy)
+	}
 	return r, err
 }
 
@@ -318,24 +324,19 @@ func (s *Store) UpdateExchangeRate(ctx context.Context, crypto, fiat, source str
 }
 
 func (s *Store) UpdateExchangeRateSettings(ctx context.Context, rate ExchangeRate, updateRate bool) error {
-	var (
-		res sql.Result
-		err error
-	)
+	table := s.table("exchange_rate")
 	if updateRate {
-		res, err = s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET source = ?, rate = ?, fee = ?, fixed_fee = ?, fee_policy = ? WHERE crypto = ? AND fiat = ?", s.table("exchange_rate")),
-			rate.Source, rate.Rate, rate.Fee, rate.FixedFee, rate.FeePolicy, rate.Crypto, rate.Fiat)
-	} else {
-		res, err = s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET source = ?, fee = ?, fixed_fee = ?, fee_policy = ? WHERE crypto = ? AND fiat = ?", s.table("exchange_rate")),
-			rate.Source, rate.Fee, rate.FixedFee, rate.FeePolicy, rate.Crypto, rate.Fiat)
-	}
-	if err != nil {
+		_, err := s.db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (source, crypto, fiat, rate, fee, fixed_fee, fee_policy)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE source = VALUES(source), rate = VALUES(rate), fee = VALUES(fee), fixed_fee = VALUES(fixed_fee), fee_policy = VALUES(fee_policy)`, table),
+			rate.Source, rate.Crypto, rate.Fiat, rate.Rate, rate.Fee, rate.FixedFee, rate.FeePolicy)
 		return err
 	}
-	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (source, crypto, fiat, rate, fee, fixed_fee, fee_policy)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE source = VALUES(source), fee = VALUES(fee), fixed_fee = VALUES(fixed_fee), fee_policy = VALUES(fee_policy)`, table),
+		rate.Source, rate.Crypto, rate.Fiat, rate.Rate, rate.Fee, rate.FixedFee, rate.FeePolicy)
+	return err
 }
 
 func (s *Store) FindInvoiceByExternalCallbackFiat(ctx context.Context, externalID, callbackURL, fiat string) (Invoice, error) {

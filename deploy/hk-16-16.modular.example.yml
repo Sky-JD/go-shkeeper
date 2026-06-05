@@ -1,4 +1,4 @@
-x-main-healthcheck: &main-healthcheck
+﻿x-main-healthcheck: &main-healthcheck
   test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5000/readyz | grep -q '\"status\":\"ready\"'"]
   interval: 15s
   timeout: 5s
@@ -12,26 +12,49 @@ x-worker-healthcheck: &worker-healthcheck
   retries: 5
   start_period: 30s
 
+x-evm-deposit-env: &evm-deposit-env
+  EVM_DEPOSIT_SCAN_ENABLED: "${EVM_DEPOSIT_SCAN_ENABLED:-true}"
+  EVM_DEPOSIT_SCAN_INTERVAL_SECONDS: "${EVM_DEPOSIT_SCAN_INTERVAL_SECONDS:-20}"
+  EVM_DEPOSIT_SCAN_MAX_INVOICE_AGE_SECONDS: "${EVM_DEPOSIT_SCAN_MAX_INVOICE_AGE_SECONDS:-7200}"
+  EVM_DEPOSIT_SCAN_BATCH_SIZE: "${EVM_DEPOSIT_SCAN_BATCH_SIZE:-200000}"
+  EVM_DEPOSIT_SCAN_BLOCK_STEP: "${EVM_DEPOSIT_SCAN_BLOCK_STEP:-500}"
+  EVM_DEPOSIT_SCAN_MIN_CONFIRMATIONS: "${EVM_DEPOSIT_SCAN_MIN_CONFIRMATIONS:-2}"
+  EVM_DEPOSIT_SCAN_START_MARGIN_SECONDS: "${EVM_DEPOSIT_SCAN_START_MARGIN_SECONDS:-600}"
+  EVM_DEPOSIT_DISPATCH_INTERVAL_SECONDS: "${EVM_DEPOSIT_DISPATCH_INTERVAL_SECONDS:-2}"
+  EVM_DEPOSIT_DISPATCH_BATCH_SIZE: "${EVM_DEPOSIT_DISPATCH_BATCH_SIZE:-200}"
+  EVM_DEPOSIT_DISPATCH_CONCURRENCY: "${EVM_DEPOSIT_DISPATCH_CONCURRENCY:-8}"
+  EVM_DEPOSIT_EVENT_MAX_ATTEMPTS: "${EVM_DEPOSIT_EVENT_MAX_ATTEMPTS:-20}"
+  SHKEEPER_API_BASE_URL: "${SHKEEPER_API_BASE_URL:-http://go-shkeeper:5000/api/v1}"
+
 services:
-  shkeeper:
+  go-shkeeper:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-shkeeper
     restart: unless-stopped
     ports:
       - "${SHKEEPER_HOST:-127.0.0.1}:${SHKEEPER_PORT:-5000}:5000"
     healthcheck: *main-healthcheck
     environment:
       SHKEEPER_LISTEN: ":5000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${SHKEEPER_DB_MAX_OPEN_CONNS:-48}"
       DB_MAX_IDLE_CONNS: "${SHKEEPER_DB_MAX_IDLE_CONNS:-16}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
       DB_CONN_MAX_LIFETIME_SECONDS: "${DB_CONN_MAX_LIFETIME_SECONDS:-1800}"
+      REQUESTS_TIMEOUT: "${REQUESTS_TIMEOUT:-35}"
+      HTTP_WRITE_TIMEOUT: "${HTTP_WRITE_TIMEOUT:-60}"
       SECRET_KEY: "${SECRET_KEY}"
       SHKEEPER_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
       SHKEEPER_BTC_BACKEND_KEY: "${SHKEEPER_BACKEND_KEY}"
+      TRON_ACCOUNT_PASSWORD: "${TRON_ACCOUNT_PASSWORD:-}"
+      BNB_ACCOUNT_PASSWORD: "${BNB_ACCOUNT_PASSWORD:-}"
+      ETH_ACCOUNT_PASSWORD: "${ETH_ACCOUNT_PASSWORD:-}"
+      POLYGON_ACCOUNT_PASSWORD: "${POLYGON_ACCOUNT_PASSWORD:-}"
+      AVALANCHE_ACCOUNT_PASSWORD: "${AVALANCHE_ACCOUNT_PASSWORD:-}"
+      ARB_ACCOUNT_PASSWORD: "${ARB_ACCOUNT_PASSWORD:-}"
+      OP_ACCOUNT_PASSWORD: "${OP_ACCOUNT_PASSWORD:-}"
+      SOLANA_ACCOUNT_PASSWORD: "${SOLANA_ACCOUNT_PASSWORD:-}"
       SHKEEPER_CALLBACK_USER_AGENT: "SHKeeper-Go-Callback/1.0"
       SHKEEPER_CRYPTOS: "${SHKEEPER_CRYPTOS:-BTC,BTC-LIGHTNING,LTC,DOGE,FIRO,FIRO-SPARK,ETH,ETH-USDT,ETH-USDC,ETH-PYUSD,TRX,USDT,USDC,BNB,BNB-USDT,BNB-USDC,MATIC,POLYGON-USDT,POLYGON-USDC,AVAX,AVALANCHE-USDT,AVALANCHE-USDC,SOL,SOLANA-USDT,SOLANA-USDC,SOLANA-PYUSD,XRP,ARBETH,ARB-USDC,ARB-PYUSD,ARB-TOKEN,OPETH,OP-USDT,OP-USDC,OP-TOKEN,XMR}"
       BTC_WALLET: "${BTC_WALLET:-disabled}"
@@ -158,14 +181,14 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-btc-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "BTC"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
+      SHKEEPER_CRYPTOS: "${SHKEEPER_CRYPTOS:-}"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -184,14 +207,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-ltc-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "LTC"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -210,14 +232,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-doge-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "DOGE"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -236,14 +257,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-firo-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "FIRO"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -262,14 +282,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-btc-lightning-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "BTC-LIGHTNING"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -295,14 +314,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-tron-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "TRON"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -323,9 +341,14 @@ services:
       USDT_PASSWORD: "${TRON_PASSWORD}"
       USDC_USERNAME: "${TRON_USERNAME}"
       USDC_PASSWORD: "${TRON_PASSWORD}"
-      TRON_USDT_CONTRACT: "${TRON_USDT_CONTRACT:-TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj}"
+      TRON_USDT_CONTRACT: "${TRON_USDT_CONTRACT:-TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t}"
       TRON_USDC_CONTRACT: "${TRON_USDC_CONTRACT:-TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8}"
       TRON_TOKEN_FEE_LIMIT_SUN: "${TRON_TOKEN_FEE_LIMIT_SUN:-100000000}"
+      TRON_BALANCE_CACHE_ENABLED: "${TRON_BALANCE_CACHE_ENABLED:-true}"
+      TRON_BALANCE_REFRESH_CRYPTOS: "${TRON_BALANCE_REFRESH_CRYPTOS:-}"
+      TRON_BALANCE_REFRESH_INTERVAL_SECONDS: "${TRON_BALANCE_REFRESH_INTERVAL_SECONDS:-60}"
+      TRON_BALANCE_REFRESH_TIMEOUT_SECONDS: "${TRON_BALANCE_REFRESH_TIMEOUT_SECONDS:-120}"
+      TRON_BALANCE_CACHE_MAX_AGE_SECONDS: "${TRON_BALANCE_CACHE_MAX_AGE_SECONDS:-180}"
     depends_on:
       - mariadb
       - redis
@@ -334,14 +357,14 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-bnb-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
+      <<: *evm-deposit-env
       CHAIN_MODULE: "BNB"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -368,14 +391,14 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-eth-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
+      <<: *evm-deposit-env
       CHAIN_MODULE: "ETH"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -400,14 +423,14 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-polygon-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
+      <<: *evm-deposit-env
       CHAIN_MODULE: "MATIC"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -430,14 +453,14 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-avalanche-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
+      <<: *evm-deposit-env
       CHAIN_MODULE: "AVAX"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -460,14 +483,14 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-arbitrum-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
+      <<: *evm-deposit-env
       CHAIN_MODULE: "ARBETH"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -492,14 +515,14 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-optimism-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
+      <<: *evm-deposit-env
       CHAIN_MODULE: "OPETH"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -524,14 +547,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-xmr-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "XMR"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -553,14 +575,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-xrp-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "XRP"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -581,14 +602,13 @@ services:
     image: ${GO_SHKEEPER_IMAGE:-go-shkeeper:local}
     build:
       context: ..
-    container_name: go-solana-worker
     restart: unless-stopped
     command: ["/app/chain-worker"]
     healthcheck: *worker-healthcheck
     environment:
       CHAIN_MODULE: "SOL"
       CHAIN_WORKER_LISTEN: ":6000"
-      MARIADB_DATABASE_URL: "mariadb://root:${MYSQL_ROOT_PASSWORD}@mariadb:3306/shkeeper"
+      MARIADB_DATABASE_URL: "mariadb://shkeeper:${MARIADB_PASSWORD}@mariadb:3306/shkeeper"
       DB_MAX_OPEN_CONNS: "${WORKER_DB_MAX_OPEN_CONNS:-16}"
       DB_MAX_IDLE_CONNS: "${WORKER_DB_MAX_IDLE_CONNS:-8}"
       DB_CONN_MAX_IDLE_SECONDS: "${DB_CONN_MAX_IDLE_SECONDS:-180}"
@@ -613,8 +633,7 @@ services:
       - redis
 
   mariadb:
-    image: mariadb:10.9.3
-    container_name: mariadb
+    image: mariadb:11.4
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD}"
@@ -625,7 +644,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: redis
     restart: unless-stopped
 
 volumes:
