@@ -6,7 +6,7 @@ Go SHKeeper is a Go rewrite of the SHKeeper application layer. It keeps the lega
 
 ## Acknowledgements
 
-This Go rewrite was developed with OpenAI Codex (GPT-5) in a vibe-coding workflow: the maintainer defines product intent, runtime constraints, and acceptance checks; Codex implements, documents, diagnoses, and verifies changes; the maintainer owns final review, secrets, deployment decisions, and production operation.
+This Go rewrite was developed with OpenAI Codex under the maintainer's direction and review. Thanks to Codex for the implementation, migration analysis, deployment diagnostics, verification work, and documentation support across the project.
 
 ## Highlights
 
