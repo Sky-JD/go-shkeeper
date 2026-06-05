@@ -424,6 +424,7 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 		"deploy/async-final-readiness.sh",
 		"deploy/modular.example.yml",
 		"deploy/evm-worker.example.yml",
+		"*_HOST) value=127.0.0.1 ;;",
 		"/app/runtime-audit",
 		"/app/cutover-preflight",
 		"/app/goal-audit",
