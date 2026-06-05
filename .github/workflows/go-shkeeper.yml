@@ -13,6 +13,7 @@ on:
       - ".github/workflows/go-shkeeper.yml"
       - "Dockerfile"
       - "docker-compose.example.yml"
+      - "docker-compose.quickstart.yml"
       - "go.mod"
       - "go.sum"
   pull_request:
@@ -24,6 +25,7 @@ on:
       - ".github/workflows/go-shkeeper.yml"
       - "Dockerfile"
       - "docker-compose.example.yml"
+      - "docker-compose.quickstart.yml"
       - "go.mod"
       - "go.sum"
   workflow_dispatch:
@@ -117,7 +119,7 @@ jobs:
 
       - name: Reject active SQLite and Python source
         run: |
-          scan_files="contrib/shkeeper-change-password.sh Dockerfile docker-compose.example.yml deploy/hk-16-16-staging-rehearsal.sh deploy/hk-16-16-production-cutover.sh deploy/hk-16-16-final-readiness.sh deploy/hk-16-16-async-final-readiness.sh deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml"
+          scan_files="contrib/shkeeper-change-password.sh Dockerfile docker-compose.example.yml docker-compose.quickstart.yml deploy/staging-rehearsal.sh deploy/production-cutover.sh deploy/final-readiness.sh deploy/async-final-readiness.sh deploy/modular.example.yml deploy/evm-worker.example.yml"
           matches="$(grep -nE '(^|[[:space:];|&])(python|python3|pip|pip3|sqlite3)([[:space:];|&]|$)|sqlite://|shkeeper\.sqlite|requirements\.txt' $scan_files || true)"
           if [ -n "$matches" ]; then
             echo "$matches"
@@ -524,7 +526,7 @@ jobs:
 
       - name: Validate compose examples
         run: |
-          for file in docker-compose.example.yml deploy/hk-16-16.modular.example.yml deploy/evm-worker.example.yml; do
+          for file in docker-compose.example.yml docker-compose.quickstart.yml deploy/modular.example.yml deploy/evm-worker.example.yml; do
             grep -hoE '\$\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\}' "$file" || true
           done | sed -E 's/^\$\{//; s/[:}].*$//' | sort -u | while read -r name; do
             case "$name" in
@@ -542,5 +544,5 @@ jobs:
           done > .env.ci
 
           docker compose --env-file .env.ci -f docker-compose.example.yml config >/dev/null
-          docker compose --env-file .env.ci -f deploy/hk-16-16.modular.example.yml config >/dev/null
+          docker compose --env-file .env.ci -f deploy/modular.example.yml config >/dev/null
           docker compose --env-file .env.ci -f docker-compose.example.yml -f deploy/evm-worker.example.yml config >/dev/null

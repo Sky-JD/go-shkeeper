@@ -68,14 +68,14 @@ type WalletAutopayout struct {
 }
 
 type ExchangeRate struct {
-	ID        int64
-	Source    string
-	Crypto    string
-	Fiat      string
-	Rate      decimal.Decimal
-	Fee       decimal.Decimal
-	FixedFee  decimal.Decimal
-	FeePolicy string
+	ID        int64           `json:"id"`
+	Source    string          `json:"source"`
+	Crypto    string          `json:"crypto"`
+	Fiat      string          `json:"fiat"`
+	Rate      decimal.Decimal `json:"rate"`
+	Fee       decimal.Decimal `json:"fee"`
+	FixedFee  decimal.Decimal `json:"fixed_fee"`
+	FeePolicy string          `json:"fee_policy"`
 }
 
 type PayoutDestination struct {

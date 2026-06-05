@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Production cutover entrypoint for hk-16-16.
+# Production cutover entrypoint for a production SHKeeper host.
 # Defaults to DRY_RUN=1. To stop legacy containers, set:
-#   DRY_RUN=0 CONFIRM_PRODUCTION_CUTOVER=GO_SHKEEPER_HK_16_16
+#   DRY_RUN=0 CONFIRM_PRODUCTION_CUTOVER=GO_SHKEEPER_PRODUCTION
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -15,7 +15,7 @@ BUILD_IMAGE="${BUILD_IMAGE:-1}"
 NETWORK="${SHKEEPER_DOCKER_NETWORK:-shkeeper_default}"
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-mariadb}"
 MARIADB_HOST="${MARIADB_HOST:-$MARIADB_CONTAINER}"
-COMPOSE_FILE="${GO_SHKEEPER_COMPOSE_FILE:-$SCRIPT_DIR/hk-16-16.modular.example.yml}"
+COMPOSE_FILE="${GO_SHKEEPER_COMPOSE_FILE:-$SCRIPT_DIR/modular.example.yml}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-shkeeper}"
 CUTOVER_ID="${CUTOVER_ID:-go-cutover-$(date +%Y%m%d%H%M%S)}"
 REPORT_DIR="${REPORT_DIR:-/tmp/$CUTOVER_ID}"
@@ -75,8 +75,8 @@ require_execute_confirmation() {
     log "dry_run=1; no production containers will be stopped"
     return 0
   fi
-  if [ "$CONFIRM_PRODUCTION_CUTOVER" != "GO_SHKEEPER_HK_16_16" ]; then
-    echo "Refusing production cutover. Set CONFIRM_PRODUCTION_CUTOVER=GO_SHKEEPER_HK_16_16 and DRY_RUN=0." >&2
+  if [ "$CONFIRM_PRODUCTION_CUTOVER" != "GO_SHKEEPER_PRODUCTION" ]; then
+    echo "Refusing production cutover. Set CONFIRM_PRODUCTION_CUTOVER=GO_SHKEEPER_PRODUCTION and DRY_RUN=0." >&2
     exit 2
   fi
 }

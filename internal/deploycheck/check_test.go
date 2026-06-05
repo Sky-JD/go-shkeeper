@@ -848,26 +848,26 @@ func TestExamplePlanFileIsValidAndReadOnlyByDefault(t *testing.T) {
 	}
 }
 
-func TestExamplePlanCoverageCryptosMatchHKModularDefaults(t *testing.T) {
+func TestExamplePlanCoverageCryptosMatchModularDefaults(t *testing.T) {
 	clearDeployCheckEnv(t)
 	cfg := defaultConfig()
 	if err := applyPlanFile(&cfg, "../../deploy/deploy-check.plan.example.json"); err != nil {
 		t.Fatalf("example plan should decode: %v", err)
 	}
 	normalizeConfig(&cfg)
-	want := defaultHKComposeCryptos(t)
+	want := defaultModularComposeCryptos(t)
 	got := map[string]struct{}{}
 	for _, crypto := range cfg.CoverageCryptos {
 		got[crypto] = struct{}{}
 	}
 	for crypto := range want {
 		if _, ok := got[crypto]; !ok {
-			t.Fatalf("deploy-check example coverage_cryptos is missing hk default crypto %s", crypto)
+			t.Fatalf("deploy-check example coverage_cryptos is missing default crypto %s", crypto)
 		}
 	}
 	for crypto := range got {
 		if _, ok := want[crypto]; !ok {
-			t.Fatalf("deploy-check example coverage_cryptos includes %s not present in hk defaults", crypto)
+			t.Fatalf("deploy-check example coverage_cryptos includes %s not present in defaults", crypto)
 		}
 	}
 }
@@ -882,7 +882,7 @@ func TestFinalCutoverPlanTemplateRequiresFullPaymentPayoutAndWorkerCoverage(t *t
 	if !cfg.Mutating || !cfg.RequirePaymentCoverage || !cfg.RequirePayoutCoverage || !cfg.MainStatusCheck || !cfg.OrderStatusMatrixCheck {
 		t.Fatalf("final cutover plan must enable mutating coverage gates, main status, and order matrix: mutating=%v payment=%v payout=%v main=%v matrix=%v", cfg.Mutating, cfg.RequirePaymentCoverage, cfg.RequirePayoutCoverage, cfg.MainStatusCheck, cfg.OrderStatusMatrixCheck)
 	}
-	wantCryptos := defaultHKComposeCryptos(t)
+	wantCryptos := defaultModularComposeCryptos(t)
 	assertCryptoSetMatches(t, "cryptos", cfg.Cryptos, wantCryptos)
 	assertCryptoSetMatches(t, "coverage_cryptos", cfg.CoverageCryptos, wantCryptos)
 
@@ -1997,26 +1997,26 @@ func assertCryptoSetMatches(t *testing.T, label string, got []string, want map[s
 	}
 	for crypto := range want {
 		if _, ok := seen[crypto]; !ok {
-			t.Fatalf("%s is missing hk default crypto %s", label, crypto)
+			t.Fatalf("%s is missing default crypto %s", label, crypto)
 		}
 	}
 	for crypto := range seen {
 		if _, ok := want[crypto]; !ok {
-			t.Fatalf("%s includes %s not present in hk defaults", label, crypto)
+			t.Fatalf("%s includes %s not present in defaults", label, crypto)
 		}
 	}
 }
 
-func defaultHKComposeCryptos(t *testing.T) map[string]struct{} {
+func defaultModularComposeCryptos(t *testing.T) map[string]struct{} {
 	t.Helper()
-	body, err := os.ReadFile("../../deploy/hk-16-16.modular.example.yml")
+	body, err := os.ReadFile("../../deploy/modular.example.yml")
 	if err != nil {
-		t.Fatalf("read hk modular compose: %v", err)
+		t.Fatalf("read modular compose: %v", err)
 	}
 	pattern := regexp.MustCompile(`SHKEEPER_CRYPTOS:\s*"\$\{SHKEEPER_CRYPTOS:-([^"}]+)\}"`)
 	match := pattern.FindStringSubmatch(string(body))
 	if match == nil {
-		t.Fatalf("hk modular compose does not include default SHKEEPER_CRYPTOS")
+		t.Fatalf("modular compose does not include default SHKEEPER_CRYPTOS")
 	}
 	out := map[string]struct{}{}
 	for _, part := range strings.Split(match[1], ",") {

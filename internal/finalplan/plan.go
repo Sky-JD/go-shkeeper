@@ -136,7 +136,7 @@ type ReadinessReport struct {
 
 func LoadConfigFromEnv() Config {
 	cfg := Config{
-		MainURL:               env("FINAL_PLAN_MAIN_URL", "http://shkeeper:5000"),
+		MainURL:               env("FINAL_PLAN_MAIN_URL", "http://go-shkeeper:5000"),
 		Cryptos:               splitCSV(os.Getenv("FINAL_PLAN_CRYPTOS")),
 		AllDefaultCryptos:     boolEnv("FINAL_PLAN_ALL_CRYPTOS", false),
 		UseWalletCryptos:      boolEnv("FINAL_PLAN_USE_WALLET_CRYPTOS", firstEnv("MARIADB_DATABASE_URL", "DATABASE_URL") != ""),

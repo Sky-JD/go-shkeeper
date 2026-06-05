@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-func TestHKModularComposeCoversLegacyEVMWorkers(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/hk-16-16.modular.example.yml")
+func TestModularComposeCoversLegacyEVMWorkers(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/modular.example.yml")
 	if err != nil {
 		t.Fatalf("read modular compose: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestHKModularComposeCoversLegacyEVMWorkers(t *testing.T) {
 func TestComposeCoversBitcoinLikeWorkers(t *testing.T) {
 	files := []string{
 		"../../docker-compose.example.yml",
-		"../../deploy/hk-16-16.modular.example.yml",
+		"../../deploy/modular.example.yml",
 	}
 	for _, file := range files {
 		body, err := os.ReadFile(file)
@@ -89,7 +89,7 @@ func TestComposeCoversBitcoinLikeWorkers(t *testing.T) {
 func TestComposeExamplesUseReadyHealthchecks(t *testing.T) {
 	files := []string{
 		"../../docker-compose.example.yml",
-		"../../deploy/hk-16-16.modular.example.yml",
+		"../../deploy/modular.example.yml",
 		"../../deploy/evm-worker.example.yml",
 	}
 	for _, file := range files {
@@ -110,7 +110,7 @@ func TestComposeExamplesUseReadyHealthchecks(t *testing.T) {
 func TestDeployConfigsUseExplicitMariaDBURL(t *testing.T) {
 	files := []string{
 		"../../docker-compose.example.yml",
-		"../../deploy/hk-16-16.modular.example.yml",
+		"../../deploy/modular.example.yml",
 		"../../deploy/evm-worker.example.yml",
 	}
 	for _, file := range files {
@@ -128,10 +128,10 @@ func TestDeployConfigsUseExplicitMariaDBURL(t *testing.T) {
 	}
 }
 
-func TestHKStagingRehearsalUsesMariaDBAndCutoverGates(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/hk-16-16-staging-rehearsal.sh")
+func TestStagingRehearsalUsesMariaDBAndCutoverGates(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/staging-rehearsal.sh")
 	if err != nil {
-		t.Fatalf("read hk staging rehearsal script: %v", err)
+		t.Fatalf("read staging rehearsal script: %v", err)
 	}
 	text := string(body)
 	required := []string{
@@ -179,7 +179,7 @@ func TestHKStagingRehearsalUsesMariaDBAndCutoverGates(t *testing.T) {
 	}
 	for _, item := range required {
 		if !strings.Contains(text, item) {
-			t.Fatalf("hk staging rehearsal script is missing %q", item)
+			t.Fatalf("staging rehearsal script is missing %q", item)
 		}
 	}
 	forbidden := []string{
@@ -191,7 +191,7 @@ func TestHKStagingRehearsalUsesMariaDBAndCutoverGates(t *testing.T) {
 	}
 	for _, item := range forbidden {
 		if strings.Contains(text, item) {
-			t.Fatalf("hk staging rehearsal script must not use %q", item)
+			t.Fatalf("staging rehearsal script must not use %q", item)
 		}
 	}
 
@@ -201,7 +201,7 @@ func TestHKStagingRehearsalUsesMariaDBAndCutoverGates(t *testing.T) {
 	}
 	readme := string(readmeBody)
 	for _, item := range []string{
-		"hk-16-16-staging-rehearsal.sh",
+		"staging-rehearsal.sh",
 		"MariaDB-only staging rehearsal",
 		"non-production `/app/release-audit`",
 		"KEEP_REHEARSAL_REPORTS=1",
@@ -213,21 +213,21 @@ func TestHKStagingRehearsalUsesMariaDBAndCutoverGates(t *testing.T) {
 		"POST_CUTOVER_REQUIRE_AUDIT_PAYOUT_TXID",
 	} {
 		if !strings.Contains(readme, item) {
-			t.Fatalf("deploy README is missing hk rehearsal documentation marker %q", item)
+			t.Fatalf("deploy README is missing rehearsal documentation marker %q", item)
 		}
 	}
 }
 
-func TestHKProductionCutoverScriptIsGuardedAndAudited(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/hk-16-16-production-cutover.sh")
+func TestProductionCutoverScriptIsGuardedAndAudited(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/production-cutover.sh")
 	if err != nil {
-		t.Fatalf("read hk production cutover script: %v", err)
+		t.Fatalf("read production cutover script: %v", err)
 	}
 	text := string(body)
 	required := []string{
 		"DRY_RUN=\"${DRY_RUN:-1}\"",
 		"CONFIRM_PRODUCTION_CUTOVER",
-		"GO_SHKEEPER_HK_16_16",
+		"GO_SHKEEPER_PRODUCTION",
 		"ROLLBACK_ON_FAILURE",
 		"rollback_needed=1",
 		"production_cutover_dry_run_ok",
@@ -275,7 +275,7 @@ func TestHKProductionCutoverScriptIsGuardedAndAudited(t *testing.T) {
 	}
 	for _, item := range required {
 		if !strings.Contains(text, item) {
-			t.Fatalf("hk production cutover script is missing %q", item)
+			t.Fatalf("production cutover script is missing %q", item)
 		}
 	}
 	forbidden := []string{
@@ -287,7 +287,7 @@ func TestHKProductionCutoverScriptIsGuardedAndAudited(t *testing.T) {
 	}
 	for _, item := range forbidden {
 		if strings.Contains(text, item) {
-			t.Fatalf("hk production cutover script must not use %q", item)
+			t.Fatalf("production cutover script must not use %q", item)
 		}
 	}
 
@@ -297,8 +297,8 @@ func TestHKProductionCutoverScriptIsGuardedAndAudited(t *testing.T) {
 	}
 	readme := string(readmeBody)
 	for _, item := range []string{
-		"hk-16-16-production-cutover.sh",
-		"DRY_RUN=0 CONFIRM_PRODUCTION_CUTOVER=GO_SHKEEPER_HK_16_16",
+		"production-cutover.sh",
+		"DRY_RUN=0 CONFIRM_PRODUCTION_CUTOVER=GO_SHKEEPER_PRODUCTION",
 		"restarts the legacy containers",
 		"/app/goal-audit",
 	} {
@@ -308,10 +308,10 @@ func TestHKProductionCutoverScriptIsGuardedAndAudited(t *testing.T) {
 	}
 }
 
-func TestHKFinalReadinessScriptIsMariaDBOnlyAndGuarded(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/hk-16-16-final-readiness.sh")
+func TestFinalReadinessScriptIsMariaDBOnlyAndGuarded(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/final-readiness.sh")
 	if err != nil {
-		t.Fatalf("read hk final readiness script: %v", err)
+		t.Fatalf("read final readiness script: %v", err)
 	}
 	text := string(body)
 	required := []string{
@@ -319,7 +319,7 @@ func TestHKFinalReadinessScriptIsMariaDBOnlyAndGuarded(t *testing.T) {
 		"UPDATE_WORKER_SERVERKEY=\"${UPDATE_WORKER_SERVERKEY:-0}\"",
 		"CONFIRM_REAL_CHAIN_REHEARSAL",
 		"CONFIRM_DB_WRITE",
-		"GO_SHKEEPER_HK_16_16",
+		"GO_SHKEEPER_PRODUCTION",
 		"MARIADB_DATABASE_URL",
 		`mariadb://root:$MYSQL_ROOT_PASSWORD@`,
 		"require_mariadb_url",
@@ -363,7 +363,7 @@ func TestHKFinalReadinessScriptIsMariaDBOnlyAndGuarded(t *testing.T) {
 	}
 	for _, item := range required {
 		if !strings.Contains(text, item) {
-			t.Fatalf("hk final readiness script is missing %q", item)
+			t.Fatalf("final readiness script is missing %q", item)
 		}
 	}
 	forbidden := []string{
@@ -379,7 +379,7 @@ func TestHKFinalReadinessScriptIsMariaDBOnlyAndGuarded(t *testing.T) {
 	}
 	for _, item := range forbidden {
 		if strings.Contains(text, item) {
-			t.Fatalf("hk final readiness script must not use %q", item)
+			t.Fatalf("final readiness script must not use %q", item)
 		}
 	}
 
@@ -389,11 +389,11 @@ func TestHKFinalReadinessScriptIsMariaDBOnlyAndGuarded(t *testing.T) {
 	}
 	readme := string(readmeBody)
 	for _, item := range []string{
-		"hk-16-16-final-readiness.sh",
+		"final-readiness.sh",
 		"final readiness",
 		"does not stop production containers",
-		"RUN_DEPLOY_CHECK=1 CONFIRM_REAL_CHAIN_REHEARSAL=GO_SHKEEPER_HK_16_16",
-		"UPDATE_WORKER_SERVERKEY=1 CONFIRM_DB_WRITE=GO_SHKEEPER_HK_16_16",
+		"RUN_DEPLOY_CHECK=1 CONFIRM_REAL_CHAIN_REHEARSAL=GO_SHKEEPER_PRODUCTION",
+		"UPDATE_WORKER_SERVERKEY=1 CONFIRM_DB_WRITE=GO_SHKEEPER_PRODUCTION",
 		"ADMIN_PASSWORD_FILE",
 		"WORKER_PASSWORD_FILE",
 		"FINAL_PLAN_USE_WALLET_API_KEY=true",
@@ -418,11 +418,11 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 		"contrib/shkeeper-change-password.sh",
 		"Reject SQLite and Python dependencies",
 		"Reject active SQLite and Python source",
-		"deploy/hk-16-16-staging-rehearsal.sh",
-		"deploy/hk-16-16-production-cutover.sh",
-		"deploy/hk-16-16-final-readiness.sh",
-		"deploy/hk-16-16-async-final-readiness.sh",
-		"deploy/hk-16-16.modular.example.yml",
+		"deploy/staging-rehearsal.sh",
+		"deploy/production-cutover.sh",
+		"deploy/final-readiness.sh",
+		"deploy/async-final-readiness.sh",
+		"deploy/modular.example.yml",
 		"deploy/evm-worker.example.yml",
 		"/app/runtime-audit",
 		"/app/cutover-preflight",
@@ -441,10 +441,10 @@ func TestGitHubWorkflowRunsMariaDBAndScansAllDeployEntrypoints(t *testing.T) {
 	}
 }
 
-func TestHKAsyncFinalReadinessScriptSurvivesSSHDisconnectsAndAvoidsInlineSecrets(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/hk-16-16-async-final-readiness.sh")
+func TestAsyncFinalReadinessScriptSurvivesSSHDisconnectsAndAvoidsInlineSecrets(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/async-final-readiness.sh")
 	if err != nil {
-		t.Fatalf("read hk async final readiness script: %v", err)
+		t.Fatalf("read async final readiness script: %v", err)
 	}
 	text := string(body)
 	required := []string{
@@ -457,7 +457,7 @@ func TestHKAsyncFinalReadinessScriptSurvivesSSHDisconnectsAndAvoidsInlineSecrets
 		"cleanup_secret_dirs",
 		"/tmp/codex-*secret*",
 		"Refusing cleanup of non-codex secret path",
-		"hk-16-16-final-readiness.sh",
+		"final-readiness.sh",
 		"ALLOW_INLINE_SECRETS",
 		"Refusing inline secret env",
 		"API_KEY_FILE",
@@ -468,7 +468,7 @@ func TestHKAsyncFinalReadinessScriptSurvivesSSHDisconnectsAndAvoidsInlineSecrets
 	}
 	for _, item := range required {
 		if !strings.Contains(text, item) {
-			t.Fatalf("hk async final readiness script is missing %q", item)
+			t.Fatalf("async final readiness script is missing %q", item)
 		}
 	}
 	forbidden := []string{
@@ -481,7 +481,7 @@ func TestHKAsyncFinalReadinessScriptSurvivesSSHDisconnectsAndAvoidsInlineSecrets
 	}
 	for _, item := range forbidden {
 		if strings.Contains(text, item) {
-			t.Fatalf("hk async final readiness script must not use %q", item)
+			t.Fatalf("async final readiness script must not use %q", item)
 		}
 	}
 }
@@ -525,8 +525,8 @@ func TestContribPasswordHelperUsesGoAdminAccountAndMariaDB(t *testing.T) {
 	}
 }
 
-func TestHKModularComposeAndDeployPlanCoverEveryDefaultCryptoWorker(t *testing.T) {
-	body, err := os.ReadFile("../../deploy/hk-16-16.modular.example.yml")
+func TestModularComposeAndDeployPlanCoverEveryDefaultCryptoWorker(t *testing.T) {
+	body, err := os.ReadFile("../../deploy/modular.example.yml")
 	if err != nil {
 		t.Fatalf("read modular compose: %v", err)
 	}
@@ -550,48 +550,48 @@ func TestHKModularComposeAndDeployPlanCoverEveryDefaultCryptoWorker(t *testing.T
 		requiredWorkerHosts[def.DefaultHost] = struct{}{}
 		service, ok := services[def.DefaultHost]
 		if !ok {
-			t.Fatalf("default crypto %s expects worker service %s, but hk modular compose is missing it", crypto, def.DefaultHost)
+			t.Fatalf("default crypto %s expects worker service %s, but modular compose is missing it", crypto, def.DefaultHost)
 		}
 		if service.ContainerName == "" {
 			t.Fatalf("worker service %s must have container_name for post-cutover inventory checks", def.DefaultHost)
 		}
 	}
-	if services["shkeeper"].ContainerName != "go-shkeeper" {
-		t.Fatalf("main compose service should target go-shkeeper container, got %+v", services["shkeeper"])
+	if services["go-shkeeper"].ContainerName != "go-shkeeper" {
+		t.Fatalf("main compose service should target go-shkeeper container, got %+v", services["go-shkeeper"])
 	}
 
 	plan := readDeployCheckPlan(t)
 	coverage := stringSet(plan.CoverageCryptos)
 	for crypto := range defaultCryptos {
 		if _, ok := coverage[crypto]; !ok {
-			t.Fatalf("deploy-check coverage_cryptos is missing hk default crypto %s", crypto)
+			t.Fatalf("deploy-check coverage_cryptos is missing default crypto %s", crypto)
 		}
 	}
 	for crypto := range coverage {
 		if _, ok := defaultCryptos[crypto]; !ok {
-			t.Fatalf("deploy-check coverage_cryptos includes %s but hk default SHKEEPER_CRYPTOS does not", crypto)
+			t.Fatalf("deploy-check coverage_cryptos includes %s but default SHKEEPER_CRYPTOS does not", crypto)
 		}
 	}
-	if hostFromURL(t, plan.MainURL) != "shkeeper" {
-		t.Fatalf("deploy-check main_url should use compose service shkeeper, got %s", plan.MainURL)
+	if hostFromURL(t, plan.MainURL) != "go-shkeeper" {
+		t.Fatalf("deploy-check main_url should use compose service go-shkeeper, got %s", plan.MainURL)
 	}
 	planWorkerHosts := map[string]struct{}{}
 	for name, rawURL := range plan.WorkerURLs {
 		host := hostFromURL(t, rawURL)
 		if _, ok := services[host]; !ok {
-			t.Fatalf("deploy-check worker %s points at %s, but hk modular compose has no such service", name, host)
+			t.Fatalf("deploy-check worker %s points at %s, but modular compose has no such service", name, host)
 		}
 		planWorkerHosts[host] = struct{}{}
 	}
 	for host := range requiredWorkerHosts {
 		if _, ok := planWorkerHosts[host]; !ok {
-			t.Fatalf("deploy-check worker_urls is missing required hk worker host %s", host)
+			t.Fatalf("deploy-check worker_urls is missing required worker host %s", host)
 		}
 	}
 }
 
-func TestDeployReadmePostCutoverInventoryChecksMatchHKCompose(t *testing.T) {
-	composeBody, err := os.ReadFile("../../deploy/hk-16-16.modular.example.yml")
+func TestDeployReadmePostCutoverInventoryChecksMatchModularCompose(t *testing.T) {
+	composeBody, err := os.ReadFile("../../deploy/modular.example.yml")
 	if err != nil {
 		t.Fatalf("read modular compose: %v", err)
 	}

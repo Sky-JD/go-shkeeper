@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Push the current go-shkeeper working tree to hk-16-16 and rebuild the Go
-# candidate stack. Runtime files on the server are preserved.
+# Push the current go-shkeeper working tree to a remote host and rebuild the Go
+# stack. Runtime files on the remote host are preserved.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-REMOTE_HOST="${HK_SHKEEPER_HOST:-hk-16-16}"
-REMOTE_DIR="${HK_SHKEEPER_REMOTE_DIR:-/root/go-shkeeper}"
-REMOTE_ARCHIVE="${HK_SHKEEPER_REMOTE_ARCHIVE:-/tmp/go-shkeeper-src-$(date +%Y%m%d%H%M%S).tgz}"
-REMOTE_MANAGER_TMP="${HK_SHKEEPER_REMOTE_MANAGER_TMP:-/tmp/shkeeperctl-$(date +%Y%m%d%H%M%S).sh}"
+REMOTE_HOST="${GO_SHKEEPER_REMOTE_HOST:-go-shkeeper-host}"
+REMOTE_DIR="${GO_SHKEEPER_REMOTE_DIR:-/opt/go-shkeeper}"
+REMOTE_ARCHIVE="${GO_SHKEEPER_REMOTE_ARCHIVE:-/tmp/go-shkeeper-src-$(date +%Y%m%d%H%M%S).tgz}"
+REMOTE_MANAGER_TMP="${GO_SHKEEPER_REMOTE_MANAGER_TMP:-/tmp/shkeeperctl-$(date +%Y%m%d%H%M%S).sh}"
 SSH_BIN="${SSH_BIN:-ssh}"
 SCP_BIN="${SCP_BIN:-scp}"
 TAR_BIN="${TAR_BIN:-tar}"
 KEEP_LOCAL_ARCHIVE="${KEEP_LOCAL_ARCHIVE:-0}"
 KEEP_REMOTE_ARCHIVE="${KEEP_REMOTE_ARCHIVE:-0}"
-SKIP_VERIFY="${HK_SHKEEPER_SKIP_VERIFY:-0}"
+SKIP_VERIFY="${GO_SHKEEPER_SKIP_VERIFY:-0}"
 
 log() {
-  printf '[hk-update] %s\n' "$*"
+  printf '[remote-upgrade] %s\n' "$*"
 }
 
 die() {
-  printf '[hk-update] error: %s\n' "$*" >&2
+  printf '[remote-upgrade] error: %s\n' "$*" >&2
   exit 1
 }
 
@@ -77,7 +77,7 @@ log "packing $LOCAL_ROOT"
   --exclude='docker-compose.example.yml' \
   --exclude='deploy/shkeeperctl.sh' \
   --exclude='deploy/install.sh' \
-  --exclude='deploy/hk-docker-debug.sh' \
+  --exclude='deploy/docker-debug.sh' \
   -C "$LOCAL_ROOT" .
 
 log "uploading source archive to $REMOTE_HOST:$REMOTE_ARCHIVE"
@@ -98,11 +98,11 @@ log "installing manager and running source-upgrade on $REMOTE_HOST"
 set -euo pipefail
 
 log() {
-  printf '[hk-update:remote] %s\n' "$*"
+  printf '[remote-upgrade:remote] %s\n' "$*"
 }
 
 die() {
-  printf '[hk-update:remote] error: %s\n' "$*" >&2
+  printf '[remote-upgrade:remote] error: %s\n' "$*" >&2
   exit 1
 }
 

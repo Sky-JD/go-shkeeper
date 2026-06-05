@@ -63,12 +63,12 @@ func TestAdminReportRoutesUseMariaDB(t *testing.T) {
 	}
 
 	checkAdminRoute(t, handler, user, http.MethodGet, "/BTC/get-rate?source=manual", "", `"BTC":"50000"`)
-	checkAdminRoute(t, handler, user, http.MethodGet, "/wallet/BTC", "", "Manage BTC")
-	checkAdminRoute(t, handler, user, http.MethodGet, "/payout/BTC", "", "Create payout")
-	checkAdminRoute(t, handler, user, http.MethodGet, "/rates", "", "BTC")
-	checkAdminRoute(t, handler, user, http.MethodGet, "/transactions", "", "report-tx")
+	checkAdminRoute(t, handler, user, http.MethodGet, "/wallet/BTC", "", "SHKeeper 管理台")
+	checkAdminRoute(t, handler, user, http.MethodGet, "/payout/BTC", "", "SHKeeper 管理台")
+	checkAdminRoute(t, handler, user, http.MethodGet, "/rates", "", "SHKeeper 管理台")
+	checkAdminRoute(t, handler, user, http.MethodGet, "/transactions", "", "SHKeeper 管理台")
 	checkAdminRoute(t, handler, user, http.MethodGet, "/parts/transactions?txid=report-tx", "", "bc1report")
-	checkAdminRoute(t, handler, user, http.MethodGet, "/payouts", "", "report-payout-tx")
+	checkAdminRoute(t, handler, user, http.MethodGet, "/payouts", "", "SHKeeper 管理台")
 	checkAdminRoute(t, handler, user, http.MethodGet, "/parts/payouts?download=csv", "", "report-payout-tx")
 
 	form := url.Values{}

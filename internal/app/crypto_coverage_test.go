@@ -77,16 +77,16 @@ func TestCryptoDefinitionsCoverCurrentLegacyPythonCryptoFiles(t *testing.T) {
 	}
 }
 
-func TestHKModularDefaultCryptoListCoversCurrentLegacyPythonCryptoFiles(t *testing.T) {
+func TestModularDefaultCryptoListCoversCurrentLegacyPythonCryptoFiles(t *testing.T) {
 	legacyModules := legacyPythonCryptoNames(t)
-	body, err := os.ReadFile("../../deploy/hk-16-16.modular.example.yml")
+	body, err := os.ReadFile("../../deploy/modular.example.yml")
 	if err != nil {
 		t.Fatalf("read modular compose: %v", err)
 	}
 	enabled := parseDefaultComposeCryptos(t, string(body))
 	for _, name := range legacyModules {
 		if _, ok := enabled[name]; !ok {
-			t.Fatalf("hk modular compose default SHKEEPER_CRYPTOS is missing legacy Python crypto %s", name)
+			t.Fatalf("modular compose default SHKEEPER_CRYPTOS is missing legacy Python crypto %s", name)
 		}
 	}
 }

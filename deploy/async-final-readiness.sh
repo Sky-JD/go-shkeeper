@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Starts hk-16-16 final readiness in a detached job so SSH disconnects do not
+# Starts final readiness in a detached job so SSH disconnects do not
 # kill Docker build or read-only readiness reporting.
 
 ASYNC_ID="${ASYNC_ID:-go-async-readiness-$(date +%Y%m%d%H%M%S)}"
@@ -112,12 +112,12 @@ if [ -n "${SOURCE_ARCHIVE:-}" ]; then
   tar -xzf "$SOURCE_ARCHIVE" -C "$WORK_DIR"
 fi
 
-if [ -x "$WORK_DIR/go-shkeeper/deploy/hk-16-16-final-readiness.sh" ] || [ -f "$WORK_DIR/go-shkeeper/deploy/hk-16-16-final-readiness.sh" ]; then
-  READINESS_SCRIPT="$WORK_DIR/go-shkeeper/deploy/hk-16-16-final-readiness.sh"
-elif [ -f "$WORK_DIR/deploy/hk-16-16-final-readiness.sh" ]; then
-  READINESS_SCRIPT="$WORK_DIR/deploy/hk-16-16-final-readiness.sh"
+if [ -x "$WORK_DIR/go-shkeeper/deploy/final-readiness.sh" ] || [ -f "$WORK_DIR/go-shkeeper/deploy/final-readiness.sh" ]; then
+  READINESS_SCRIPT="$WORK_DIR/go-shkeeper/deploy/final-readiness.sh"
+elif [ -f "$WORK_DIR/deploy/final-readiness.sh" ]; then
+  READINESS_SCRIPT="$WORK_DIR/deploy/final-readiness.sh"
 else
-  echo "Cannot find hk-16-16-final-readiness.sh under $WORK_DIR" >&2
+  echo "Cannot find final-readiness.sh under $WORK_DIR" >&2
   exit 2
 fi
 

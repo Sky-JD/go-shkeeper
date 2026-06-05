@@ -16,7 +16,7 @@ import (
 
 func TestBuildPlanFromExplicitCryptos(t *testing.T) {
 	cfg := Config{
-		MainURL:               "http://shkeeper:5000",
+		MainURL:               "http://go-shkeeper:5000",
 		Cryptos:               []string{"bnb-usdt", "TRX", "USDT", "USDC"},
 		UseWalletCryptos:      false,
 		APIKey:                "api-key",

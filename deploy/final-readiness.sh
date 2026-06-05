@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Final readiness entrypoint for hk-16-16.
+# Final readiness entrypoint for a production SHKeeper host.
 # Defaults to read-only checks. It does not stop or replace production containers.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -266,8 +266,8 @@ docker run --rm --network "$NETWORK" \
 require_report_status "$PREFLIGHT_REPORT" pass "cutover preflight report"
 
 if [ "$UPDATE_WORKER_SERVERKEY" = "1" ]; then
-  if [ "$CONFIRM_DB_WRITE" != "GO_SHKEEPER_HK_16_16" ]; then
-    echo "Refusing wallet.serverkey update. Set CONFIRM_DB_WRITE=GO_SHKEEPER_HK_16_16 with UPDATE_WORKER_SERVERKEY=1." >&2
+  if [ "$CONFIRM_DB_WRITE" != "GO_SHKEEPER_PRODUCTION" ]; then
+    echo "Refusing wallet.serverkey update. Set CONFIRM_DB_WRITE=GO_SHKEEPER_PRODUCTION with UPDATE_WORKER_SERVERKEY=1." >&2
     exit 2
   fi
   docker run --rm --network "$NETWORK" \
@@ -315,8 +315,8 @@ if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' "$READINESS_FILE"; then
 fi
 
 if [ "$RUN_DEPLOY_CHECK" = "1" ]; then
-  if [ "$CONFIRM_REAL_CHAIN_REHEARSAL" != "GO_SHKEEPER_HK_16_16" ]; then
-    echo "Refusing mutating deploy-check. Set CONFIRM_REAL_CHAIN_REHEARSAL=GO_SHKEEPER_HK_16_16 with RUN_DEPLOY_CHECK=1." >&2
+  if [ "$CONFIRM_REAL_CHAIN_REHEARSAL" != "GO_SHKEEPER_PRODUCTION" ]; then
+    echo "Refusing mutating deploy-check. Set CONFIRM_REAL_CHAIN_REHEARSAL=GO_SHKEEPER_PRODUCTION with RUN_DEPLOY_CHECK=1." >&2
     exit 2
   fi
   DEPLOY_ENV+=(
@@ -334,7 +334,7 @@ if [ "$RUN_DEPLOY_CHECK" = "1" ]; then
     "$GO_SHKEEPER_IMAGE" /app/deploy-check
   require_report_status "$DEPLOY_REPORT" ok "final deploy-check report"
 else
-  log "deploy_check_skipped; set RUN_DEPLOY_CHECK=1 CONFIRM_REAL_CHAIN_REHEARSAL=GO_SHKEEPER_HK_16_16 for the real-chain rehearsal"
+  log "deploy_check_skipped; set RUN_DEPLOY_CHECK=1 CONFIRM_REAL_CHAIN_REHEARSAL=GO_SHKEEPER_PRODUCTION for the real-chain rehearsal"
 fi
 
 run_goal_audit || true

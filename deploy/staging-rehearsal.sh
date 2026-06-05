@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run from the repository checkout on hk-16-16. This creates an isolated
+# Run from a repository checkout on a deployment host. This creates an isolated
 # MariaDB database and temporary Go containers; it does not replace production.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,8 +22,8 @@ REHEARSAL_ORDER_LIST_REQUESTS="${REHEARSAL_ORDER_LIST_REQUESTS:-200}"
 REHEARSAL_ORDER_LIST_CONCURRENCY="${REHEARSAL_ORDER_LIST_CONCURRENCY:-50}"
 REHEARSAL_ORDER_LIST_MAX_LATENCY_MS="${REHEARSAL_ORDER_LIST_MAX_LATENCY_MS:-500}"
 
-ID="hk-rehearsal-$(date +%Y%m%d%H%M%S)-$$"
-DB="go_hk_rehearsal_$(date +%Y%m%d%H%M%S)_$$"
+ID="go-rehearsal-$(date +%Y%m%d%H%M%S)-$$"
+DB="go_rehearsal_$(date +%Y%m%d%H%M%S)_$$"
 IMAGE="${GO_SHKEEPER_IMAGE:-go-shkeeper:$ID}"
 MAIN="go-shkeeper-main-$ID"
 BNB_WORKER="go-shkeeper-bnb-$ID"
@@ -318,14 +318,14 @@ cat > "$PLAN" <<JSON
       "crypto": "BNB-USDT",
       "fiat": "USD",
       "amount": "1",
-      "external_id_prefix": "go-hk-rehearsal-bnb-usdt"
+      "external_id_prefix": "go-rehearsal-bnb-usdt"
     },
     {
       "name": "trx-payment",
       "crypto": "TRX",
       "fiat": "USD",
       "amount": "1",
-      "external_id_prefix": "go-hk-rehearsal-trx"
+      "external_id_prefix": "go-rehearsal-trx"
     }
   ],
   "worker_address_checks": [
@@ -441,6 +441,6 @@ UNION ALL SELECT 'tron_accounts', COUNT(*) FROM chain_account WHERE module='TRON
 UNION ALL SELECT 'encrypted_accounts', COUNT(*) FROM chain_account WHERE private_key_hex LIKE 'v1:%';
 "
 echo "--- latest rehearsal invoices ---"
-run_sql "$DB" -e "SELECT id, crypto, status, external_id, LEFT(addr, 16), amount_fiat, amount_crypto FROM invoice WHERE external_id LIKE 'go-hk-rehearsal-%' ORDER BY id DESC LIMIT 5"
+run_sql "$DB" -e "SELECT id, crypto, status, external_id, LEFT(addr, 16), amount_fiat, amount_crypto FROM invoice WHERE external_id LIKE 'go-rehearsal-%' ORDER BY id DESC LIMIT 5"
 
 echo "rehearsal_ok id=$ID db=$DB order_crypto=$ORDER_CRYPTO"

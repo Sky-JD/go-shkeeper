@@ -387,9 +387,6 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"balance": total.String()})
 		return
 	}
-	if s.cfg.Module == "TRON" {
-		_, _ = s.latestBlockTimestamp(r.Context())
-	}
 	total := decimal.Zero
 	if s.cfg.Module == "TRON" {
 		entry, ready, err := s.cachedTRONSpendable(r.Context(), crypto, queryBool(r, "refresh") || queryBool(r, "live"))

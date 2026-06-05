@@ -1,5 +1,5 @@
 {
-    "main_url":  "http://shkeeper:5000",
+    "main_url":  "http://go-shkeeper:5000",
     "worker_urls":  {
                         "btc":  "http://btc-worker:6000",
                         "ltc":  "http://ltc-worker:6000",

@@ -756,7 +756,7 @@ ensure_compose_services_for_cryptos() {
   missing="$(missing_worker_services_for_cryptos "$cryptos" || true)"
   [ -z "$missing" ] && return 0
 
-  modular_rel="deploy/hk-16-16.modular.example.yml"
+  modular_rel="deploy/modular.example.yml"
   modular_file="$ROOT_DIR/$modular_rel"
   unresolved=""
   while IFS=: read -r crypto worker; do
@@ -794,7 +794,7 @@ require_worker_services_available() {
   missing="$(missing_worker_services_for_cryptos "$@" || true)"
   [ -z "$missing" ] && return 0
   printf '%s\n' "$missing" >&2
-  die "current compose files do not define every required worker service; use SHKEEPER_COMPOSE_FILE=deploy/hk-16-16.modular.example.yml or choose only supported cryptos"
+  die "current compose files do not define every required worker service; use SHKEEPER_COMPOSE_FILE=deploy/modular.example.yml or choose only supported cryptos"
 }
 
 all_worker_services() {
@@ -1203,7 +1203,7 @@ apply_source_archive() {
   fi
 
   mkdir -p "$ROOT_DIR" "$backup_dir"
-  for path in .env docker-compose.example.yml secrets deploy-reports deploy/shkeeperctl.sh deploy/install.sh deploy/hk-docker-debug.sh; do
+  for path in .env docker-compose.example.yml secrets deploy-reports deploy/shkeeperctl.sh deploy/install.sh deploy/docker-debug.sh; do
     if [ -e "$ROOT_DIR/$path" ]; then
       mkdir -p "$backup_dir/$(dirname "$path")"
       cp -a "$ROOT_DIR/$path" "$backup_dir/$path"
@@ -1217,7 +1217,7 @@ apply_source_archive() {
   log "extracting source archive: $archive"
   tar -xzf "$archive" -C "$ROOT_DIR"
 
-  for path in .env docker-compose.example.yml secrets deploy-reports deploy/shkeeperctl.sh deploy/install.sh deploy/hk-docker-debug.sh; do
+  for path in .env docker-compose.example.yml secrets deploy-reports deploy/shkeeperctl.sh deploy/install.sh deploy/docker-debug.sh; do
     if [ -e "$backup_dir/$path" ]; then
       rm -rf "$ROOT_DIR/$path"
       mkdir -p "$(dirname "$ROOT_DIR/$path")"
@@ -1591,18 +1591,18 @@ EOF
 
 run_debug() {
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[shkeeperctl] dry-run: GO_SHKEEPER_IMAGE=%q bash %q\n' "$IMAGE" "$ROOT_DIR/deploy/hk-docker-debug.sh"
+    printf '[shkeeperctl] dry-run: GO_SHKEEPER_IMAGE=%q bash %q\n' "$IMAGE" "$ROOT_DIR/deploy/docker-debug.sh"
     return 0
   fi
-  GO_SHKEEPER_IMAGE="$IMAGE" bash "$ROOT_DIR/deploy/hk-docker-debug.sh"
+  GO_SHKEEPER_IMAGE="$IMAGE" bash "$ROOT_DIR/deploy/docker-debug.sh"
 }
 
 run_readiness() {
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[shkeeperctl] dry-run: GO_SHKEEPER_IMAGE=%q bash %q\n' "$IMAGE" "$ROOT_DIR/deploy/hk-16-16-final-readiness.sh"
+    printf '[shkeeperctl] dry-run: GO_SHKEEPER_IMAGE=%q bash %q\n' "$IMAGE" "$ROOT_DIR/deploy/final-readiness.sh"
     return 0
   fi
-  GO_SHKEEPER_IMAGE="$IMAGE" bash "$ROOT_DIR/deploy/hk-16-16-final-readiness.sh"
+  GO_SHKEEPER_IMAGE="$IMAGE" bash "$ROOT_DIR/deploy/final-readiness.sh"
 }
 
 if [ "$#" -eq 0 ]; then

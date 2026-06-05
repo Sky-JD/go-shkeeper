@@ -16,6 +16,7 @@ import (
 func TestAdminRatesBackfillsEnabledWalletRates(t *testing.T) {
 	store, cfg := testStore(t)
 	defer store.Close()
+	cfg.CryptoAllowList = []string{"USDT", "BNB"}
 	ctx := t.Context()
 	if err := store.EnsureWallet(ctx, "USDT", "test-api-key"); err != nil {
 		t.Fatalf("ensure USDT wallet: %v", err)
@@ -197,6 +198,7 @@ func TestAdminPayoutQuoteSkipsUnsupportedBackendFeeEstimate(t *testing.T) {
 func TestAdminRatesPostBackfillsMissingRateRows(t *testing.T) {
 	store, cfg := testStore(t)
 	defer store.Close()
+	cfg.CryptoAllowList = []string{"USDT"}
 	ctx := t.Context()
 	setAdminPassword(t, store, cfg, "admin-password")
 	handler := newTestHTTPHandler(t, store, cfg)
@@ -272,7 +274,8 @@ func TestAdminWalletImportAcceptsLegacyAddressMap(t *testing.T) {
 	setAdminPassword(t, store, cfg, "admin-password")
 	handler := newTestHTTPHandler(t, store, cfg)
 
-	legacyJSON := `{"0xabc":{"public_address":"0xabc","secret":"plain-private-key"}}`
+	legacyAddress := "0x0000000000000000000000000000000000000abc"
+	legacyJSON := `{"0x0000000000000000000000000000000000000abc":{"public_address":"0x0000000000000000000000000000000000000abc","secret":"plain-private-key"}}`
 	res := adminJSON(t, handler, http.MethodPost, "/api/v1/admin/wallet-import", map[string]any{
 		"module":           "BNB",
 		"default_crypto":   "BNB-USDT",
@@ -286,14 +289,14 @@ func TestAdminWalletImportAcceptsLegacyAddressMap(t *testing.T) {
 		t.Fatalf("import did not report one row: %s", res.Body.String())
 	}
 	var module, crypto, address, secret string
-	err := store.DB().QueryRow("SELECT module, crypto, address, private_key_hex FROM chain_account WHERE address = ?", "0xabc").Scan(&module, &crypto, &address, &secret)
+	err := store.DB().QueryRow("SELECT module, crypto, address, private_key_hex FROM chain_account WHERE address = ?", legacyAddress).Scan(&module, &crypto, &address, &secret)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			t.Fatalf("imported account was not written")
 		}
 		t.Fatalf("query chain_account: %v", err)
 	}
-	if module != "BNB" || crypto != "BNB-USDT" || address != "0xabc" || !strings.HasPrefix(secret, "v1:") {
+	if module != "BNB" || crypto != "BNB-USDT" || address != legacyAddress || !strings.HasPrefix(secret, "v1:") {
 		t.Fatalf("unexpected imported account module=%s crypto=%s address=%s secret=%s", module, crypto, address, secret)
 	}
 	if _, err := store.WalletByCrypto(t.Context(), "BNB-USDT"); err != nil {
@@ -354,7 +357,8 @@ func TestAdminWalletImportAcceptsSingleLegacyBNBWalletObject(t *testing.T) {
 	setAdminPassword(t, store, cfg, "admin-password")
 	handler := newTestHTTPHandler(t, store, cfg)
 
-	legacyJSON := `{"public_address":"0xsingle","secret":"plain-private-key"}`
+	legacyAddress := "0x0000000000000000000000000000000000000002"
+	legacyJSON := `{"public_address":"0x0000000000000000000000000000000000000002","secret":"plain-private-key"}`
 	res := adminJSON(t, handler, http.MethodPost, "/api/v1/admin/wallet-import", map[string]any{
 		"module":           "BNB",
 		"default_crypto":   "BNB-USDT",
@@ -368,14 +372,14 @@ func TestAdminWalletImportAcceptsSingleLegacyBNBWalletObject(t *testing.T) {
 		t.Fatalf("import did not report one row: %s", res.Body.String())
 	}
 	var module, crypto, address, secret string
-	err := store.DB().QueryRow("SELECT module, crypto, address, private_key_hex FROM chain_account WHERE address = ?", "0xsingle").Scan(&module, &crypto, &address, &secret)
+	err := store.DB().QueryRow("SELECT module, crypto, address, private_key_hex FROM chain_account WHERE address = ?", legacyAddress).Scan(&module, &crypto, &address, &secret)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			t.Fatalf("single legacy wallet object was not written")
 		}
 		t.Fatalf("query chain_account: %v", err)
 	}
-	if module != "BNB" || crypto != "BNB-USDT" || address != "0xsingle" || !strings.HasPrefix(secret, "v1:") {
+	if module != "BNB" || crypto != "BNB-USDT" || address != legacyAddress || !strings.HasPrefix(secret, "v1:") {
 		t.Fatalf("unexpected imported account module=%s crypto=%s address=%s secret=%s", module, crypto, address, secret)
 	}
 }

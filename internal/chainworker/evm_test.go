@@ -91,7 +91,7 @@ func TestBNBTokenBalanceFallsBackToModuleAccounts(t *testing.T) {
 	}))
 	defer fullnode.Close()
 
-	cfg := Config{Module: "BNB", FullnodeURL: fullnode.URL, Username: "worker", Password: "secret", RequestTimeout: 5}
+	cfg := Config{Module: "BNB", FullnodeURL: fullnode.URL, Username: "worker", Password: "secret", RequestTimeout: 5 * time.Second}
 	handler := NewServer(cfg, store, slog.New(slog.NewTextHandler(os.Stdout, nil))).Routes()
 	req := httptest.NewRequest(http.MethodPost, "/BNB-USDT/balance", nil)
 	req.SetBasicAuth("worker", "secret")
