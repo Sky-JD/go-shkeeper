@@ -1,5 +1,9 @@
 # Go SHKeeper
 
+## Acknowledgements / 致谢
+
+The current Go rewrite of this repository, including the application service, chain workers, Vue admin UI, deployment scripts, tests, and documentation updates, was built with OpenAI Codex (GPT-5) under the maintainer's direction and review. Thanks to Codex for the implementation, migration analysis, deployment diagnostics, verification work, and documentation support across the project.
+
 `go-shkeeper` is a Go rewrite of the SHKeeper application layer. It keeps the existing table names and API surface where practical, while adding a complete order query API and an authenticated admin account update flow.
 
 ## Highlights
