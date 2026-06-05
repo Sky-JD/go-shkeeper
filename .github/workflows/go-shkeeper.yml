@@ -540,6 +540,7 @@ jobs:
               *_DECIMALS) value=6 ;;
               *_CHAIN_ID|EVM_CHAIN_ID|BTC_ESTIMATE_TARGET_BLOCKS|LIGHTNING_INVOICE_TTL|TRON_TOKEN_FEE_LIMIT_SUN) value=1 ;;
               *_HOST) value=127.0.0.1 ;;
+              *_PORT) value=1 ;;
               *_URL|FULLNODE_URL|*_FULLNODE_URL|*_RPC_URL|LND_REST_URL|LNBITS_URL) value=http://example.invalid ;;
               *_CONTRACT|*_MINT|*_TOKEN_PROGRAM|*_ADDRESS) value=0x0000000000000000000000000000000000000000 ;;
               *_TLS_SKIP_VERIFY) value=false ;;
