@@ -21,14 +21,15 @@ import (
 )
 
 type CryptoRegistry struct {
-	cfg        Config
-	store      *Store
-	logger     *slog.Logger
-	httpClient *http.Client
-	modules    map[string]*CryptoModule
-	cacheMu    sync.Mutex
-	cacheUntil time.Time
-	cacheValue map[string]any
+	cfg              Config
+	store            *Store
+	logger           *slog.Logger
+	httpClient       *http.Client
+	payoutHTTPClient *http.Client
+	modules          map[string]*CryptoModule
+	cacheMu          sync.Mutex
+	cacheUntil       time.Time
+	cacheValue       map[string]any
 }
 
 type CryptoModule struct {
@@ -56,11 +57,12 @@ type ChainTransfer struct {
 
 func NewCryptoRegistry(cfg Config, store *Store, logger *slog.Logger) *CryptoRegistry {
 	reg := &CryptoRegistry{
-		cfg:        cfg,
-		store:      store,
-		logger:     logger,
-		httpClient: &http.Client{Timeout: cfg.RequestTimeout},
-		modules:    map[string]*CryptoModule{},
+		cfg:              cfg,
+		store:            store,
+		logger:           logger,
+		httpClient:       &http.Client{Timeout: cfg.RequestTimeout},
+		payoutHTTPClient: &http.Client{Timeout: cfg.PayoutRequestTimeout},
+		modules:          map[string]*CryptoModule{},
 	}
 	for _, def := range cryptoDefinitions() {
 		if reg.enabledByConfig(def) {
@@ -347,7 +349,7 @@ func (r *CryptoRegistry) Payout(ctx context.Context, c *CryptoModule, destinatio
 		path += "/" + url.PathEscape(fee)
 	}
 	var payload map[string]any
-	if err := r.backendJSON(ctx, c, http.MethodPost, path, nil, &payload); err != nil {
+	if err := r.backendJSONWithClient(ctx, r.payoutHTTPClient, c, http.MethodPost, path, nil, &payload); err != nil {
 		return nil, err
 	}
 	return payload, nil
@@ -471,6 +473,10 @@ func supportsBackendFeeEstimate(c *CryptoModule) bool {
 	if c.Network == "TRX" {
 		return true
 	}
+	switch strings.ToUpper(c.Network) {
+	case "ETH", "BNB", "MATIC", "AVAX", "ARBETH", "OPETH":
+		return true
+	}
 	switch c.Name {
 	case "BTC", "LTC", "DOGE", "FIRO", "FIRO-SPARK":
 		return true
@@ -484,7 +490,7 @@ func (r *CryptoRegistry) ServerDetails(ctx context.Context, c *CryptoModule) map
 	return map[string]any{"status": "success", "key": user + ":" + pass, "host": r.moduleHost(ctx, c)}
 }
 
-func (r *CryptoRegistry) Backup(ctx context.Context, c *CryptoModule) ([]byte, string, error) {
+func (r *CryptoRegistry) Backup(ctx context.Context, c *CryptoModule, includePrivateKey bool) ([]byte, string, error) {
 	if c.Adapter == "jsonrpc" {
 		payload := map[string]any{
 			"status":  "error",
@@ -493,9 +499,13 @@ func (r *CryptoRegistry) Backup(ctx context.Context, c *CryptoModule) ([]byte, s
 		data, err := json.Marshal(payload)
 		return data, "application/json", err
 	}
-	data, contentType, err := r.backendRaw(ctx, c, http.MethodGet, "/"+c.Name+"/dump", nil)
+	path := "/" + c.Name + "/dump"
+	if includePrivateKey {
+		path += "?include_private_key=1"
+	}
+	data, contentType, err := r.backendRaw(ctx, c, http.MethodGet, path, nil)
 	if err != nil {
-		data, contentType, err = r.backendRaw(ctx, c, http.MethodPost, "/"+c.Name+"/dump", nil)
+		data, contentType, err = r.backendRaw(ctx, c, http.MethodPost, path, nil)
 	}
 	return data, contentType, err
 }
@@ -751,6 +761,10 @@ type bitcoinLikeTransactionResponse struct {
 }
 
 func (r *CryptoRegistry) backendJSON(ctx context.Context, c *CryptoModule, method string, path string, body any, out any) error {
+	return r.backendJSONWithClient(ctx, r.httpClient, c, method, path, body, out)
+}
+
+func (r *CryptoRegistry) backendJSONWithClient(ctx context.Context, client *http.Client, c *CryptoModule, method string, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -770,7 +784,10 @@ func (r *CryptoRegistry) backendJSON(ctx context.Context, c *CryptoModule, metho
 	if user != "" || pass != "" {
 		req.SetBasicAuth(user, pass)
 	}
-	resp, err := r.httpClient.Do(req)
+	if client == nil {
+		client = r.httpClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

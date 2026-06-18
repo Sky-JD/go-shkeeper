@@ -20,6 +20,7 @@ type Config struct {
 	SecretKey                     []byte
 	SuggestedWalletAPIKey         string
 	RequestTimeout                time.Duration
+	PayoutRequestTimeout          time.Duration
 	NotificationTimeout           time.Duration
 	HTTPReadTimeout               time.Duration
 	HTTPWriteTimeout              time.Duration
@@ -49,6 +50,7 @@ func LoadConfig() Config {
 		ListenAddr:                    env("SHKEEPER_LISTEN", ":5000"),
 		DatabaseURL:                   firstEnv("MARIADB_DATABASE_URL", "DATABASE_URL"),
 		RequestTimeout:                secondsEnv("REQUESTS_TIMEOUT", 10),
+		PayoutRequestTimeout:          secondsEnv("PAYOUT_REQUEST_TIMEOUT", 120),
 		NotificationTimeout:           secondsEnv("REQUESTS_NOTIFICATION_TIMEOUT", 30),
 		HTTPReadTimeout:               secondsEnv("HTTP_READ_TIMEOUT", 10),
 		HTTPWriteTimeout:              secondsEnv("HTTP_WRITE_TIMEOUT", 15),

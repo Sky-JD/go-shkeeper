@@ -34,6 +34,26 @@ func TestTxIDsFromPayoutResult(t *testing.T) {
 	if len(got) != 1 || got[0] != "single-tx" {
 		t.Fatalf("single txid result was not parsed: %+v", got)
 	}
+
+	details := payoutTxDetailsFromAny(map[string]any{
+		"dest":    "dest1",
+		"crypto":  "BNB-USDT",
+		"txids":   []any{"tx1", "tx2"},
+		"sources": []any{"src1", "src2"},
+		"amounts": []any{"1.02", "0.50"},
+	}, "BNB-USDT", "fallback")
+	if len(details) != 2 || details[0].TxID != "tx1" || details[0].SourceAddr != "src1" || !details[0].Amount.Equal(decimal.RequireFromString("1.02")) || details[1].SourceAddr != "src2" {
+		t.Fatalf("unexpected payout details: %+v", details)
+	}
+	details = payoutTxDetailsFromAny(map[string]any{
+		"details": []any{
+			map[string]any{"kind": "gas_topup", "txid": "gas1", "amount": "0.001", "crypto": "BNB"},
+			map[string]any{"kind": "payout", "txid": "pay1", "amount": "1.02", "crypto": "BNB-USDT", "source": "src", "destination": "dest"},
+		},
+	}, "BNB-USDT", "fallback")
+	if len(details) != 2 || details[0].Kind != "gas_topup" || details[1].Kind != "payout" || details[1].DestAddr != "dest" {
+		t.Fatalf("structured details were not parsed: %+v", details)
+	}
 }
 
 func TestPayoutPersistsBeforeWorkerSuccess(t *testing.T) {
@@ -118,6 +138,65 @@ func TestPayoutPersistsBitcoinLikeWorkerSuccess(t *testing.T) {
 	}
 	if payout.Status != PayoutInProgress || nullStringValue(payout.TaskID) != "ltc-task-success" || len(payout.Transactions) != 1 || payout.Transactions[0].TxID != "ltc-tx-success" {
 		t.Fatalf("LTC payout was not persisted with worker result: %+v", payout)
+	}
+}
+
+func TestPayoutWorkerPartialPersistsDetailsAndStatus(t *testing.T) {
+	store, cfg := testStore(t)
+	defer store.Close()
+	cfg.CryptoAllowList = []string{"BNB-USDT"}
+	ctx := t.Context()
+	if err := store.EnsureWallet(ctx, "BNB-USDT", "test-api-key"); err != nil {
+		t.Fatalf("ensure wallet: %v", err)
+	}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/BNB-USDT/payout/0xdest/2.04" {
+			t.Fatalf("unexpected backend path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  "PARTIAL",
+			"task_id": "partial-task",
+			"message": "second split failed",
+			"result": map[string]any{
+				"dest":    "0xdest",
+				"status":  "PARTIAL",
+				"error":   "second split failed",
+				"txids":   []string{"0xpay1"},
+				"sources": []string{"0xsrc1"},
+				"amounts": []string{"1.02"},
+				"details": []map[string]any{
+					{"kind": "gas_topup", "txid": "0xgas1", "status": "IN_PROGRESS", "source": "0xfunder", "destination": "0xsrc1", "amount": "0.00001", "crypto": "BNB"},
+					{"kind": "payout", "txid": "0xpay1", "status": "IN_PROGRESS", "source": "0xsrc1", "destination": "0xdest", "amount": "1.02", "crypto": "BNB-USDT"},
+					{"kind": "payout", "status": "FAIL", "source": "0xsrc2", "destination": "0xdest", "amount": "1.02", "crypto": "BNB-USDT", "error": "nonce failed"},
+				},
+			},
+		})
+	}))
+	defer backend.Close()
+	t.Setenv("BNB_API_SERVER_HOST", strings.TrimPrefix(backend.URL, "http://"))
+	setAdminPassword(t, store, cfg, "admin-password")
+	handler := newTestHTTPHandler(t, store, cfg)
+
+	res := adminJSON(t, handler, http.MethodPost, "/api/v1/BNB-USDT/payout", map[string]any{
+		"destination": "0xdest",
+		"amount":      "2.04",
+		"external_id": "partial-payout",
+	})
+	if res.Code != http.StatusOK {
+		t.Fatalf("payout status=%d body=%s", res.Code, res.Body.String())
+	}
+	payout, err := store.PayoutByExternalID(ctx, "BNB-USDT", "partial-payout")
+	if err != nil {
+		t.Fatalf("load payout: %v", err)
+	}
+	if payout.Status != PayoutPartial || nullStringValue(payout.TaskID) != "partial-task" || nullStringValue(payout.Error) != "second split failed" {
+		t.Fatalf("partial payout state was not persisted: %+v", payout)
+	}
+	if len(payout.Transactions) != 3 {
+		t.Fatalf("partial payout details were not persisted: %+v", payout.Transactions)
+	}
+	if payout.Transactions[0].Kind != "gas_topup" || payout.Transactions[1].TxID != "0xpay1" || payout.Transactions[2].Status != PayoutFail || payout.Transactions[2].Error != "nonce failed" {
+		t.Fatalf("unexpected partial payout details: %+v", payout.Transactions)
 	}
 }
 

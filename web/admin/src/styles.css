@@ -1170,6 +1170,30 @@ tr:last-child td {
   border-bottom: 0;
 }
 
+.tx-detail-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 260px;
+}
+
+.tx-detail-row {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tx-detail-row .text-bad {
+  grid-column: 1 / -1;
+}
+
 .detail-row td {
   background: rgba(0, 122, 255, 0.04);
 }

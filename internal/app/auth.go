@@ -139,6 +139,10 @@ func (a *AuthManager) CurrentUser(r *http.Request) (User, bool) {
 	if user, ok := r.Context().Value(userContextKey).(User); ok {
 		return user, true
 	}
+	return a.CurrentSessionUser(r)
+}
+
+func (a *AuthManager) CurrentSessionUser(r *http.Request) (User, bool) {
 	cookie, err := r.Cookie("shkeeper_session")
 	if err != nil {
 		return User{}, false

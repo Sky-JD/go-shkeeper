@@ -135,18 +135,33 @@ func TestDumpAccountsEndpointReturnsEncryptedKeys(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 
-	account := Account{Module: "BNB", Crypto: "BNB", Address: "0x0000000000000000000000000000000000000002", PrivateKeyHex: "v1:encrypted"}
+	encryptedKey, err := encryptSecret("account-password", "plain-private-key")
+	if err != nil {
+		t.Fatalf("encrypt key: %v", err)
+	}
+	account := Account{Module: "BNB", Crypto: "BNB", Address: "0x0000000000000000000000000000000000000002", PrivateKeyHex: encryptedKey}
 	if err := store.AddAccount(ctx, &account); err != nil {
 		t.Fatalf("add account: %v", err)
 	}
-	cfg := Config{Module: "BNB", Username: "worker", Password: "secret", RequestTimeout: 5}
+	cfg := Config{Module: "BNB", Username: "worker", Password: "secret", AccountPassword: "account-password", RequestTimeout: 5}
 	handler := NewServer(cfg, store, slog.New(slog.NewTextHandler(os.Stdout, nil))).Routes()
 	req := httptest.NewRequest(http.MethodGet, "/BNB/dump", nil)
 	req.SetBasicAuth("worker", "secret")
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
-	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"private_key_encrypted":"v1:encrypted"`) {
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"private_key_encrypted":"`) {
 		t.Fatalf("dump status=%d body=%s", res.Code, res.Body.String())
+	}
+	if strings.Contains(res.Body.String(), `"private_key":`) {
+		t.Fatalf("default dump should not include plaintext private key: %s", res.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/BNB/dump?include_private_key=1", nil)
+	req.SetBasicAuth("worker", "secret")
+	res = httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"private_key":"plain-private-key"`) {
+		t.Fatalf("plaintext dump status=%d body=%s", res.Code, res.Body.String())
 	}
 }
 

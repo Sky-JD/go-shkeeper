@@ -157,7 +157,12 @@ func (h *HTTPHandler) apiBackup(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusNotFound, err)
 		return
 	}
-	data, contentType, err := h.crypto.Backup(r.Context(), module)
+	includePrivateKey := boolQuery(r, "include_private_key") || boolQuery(r, "private_key") || boolQuery(r, "decrypted")
+	if _, ok := h.auth.CurrentSessionUser(r); includePrivateKey && !ok {
+		errorJSON(w, http.StatusForbidden, errors.New("明文私钥导出必须通过已登录后台会话发起"))
+		return
+	}
+	data, contentType, err := h.crypto.Backup(r.Context(), module, includePrivateKey)
 	if err != nil {
 		errorJSON(w, http.StatusBadGateway, err)
 		return

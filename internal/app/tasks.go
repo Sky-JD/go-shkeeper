@@ -232,12 +232,22 @@ func (s *Scheduler) dispatchAutopayout(ctx context.Context, module *CryptoModule
 		_ = s.store.MarkPayoutFail(ctx, payout.ID, err.Error())
 		return
 	}
-	txids := txIDsFromAny(res["result"])
-	if len(txids) == 0 {
-		txids = txIDsFromAny(res)
+	result := res["result"]
+	if result == nil {
+		result = res
 	}
-	if err := s.store.SetPayoutTaskAndTxIDs(ctx, payout.ID, anyString(res["task_id"]), txids); err != nil {
+	details := payoutTxDetailsFromAny(result, module.Name, destination)
+	if len(details) == 0 {
+		details = payoutTxDetailsFromTxIDs(txIDsFromAny(result), module.Name, destination)
+	}
+	if err := s.store.SetPayoutTaskAndTxDetails(ctx, payout.ID, anyString(res["task_id"]), details); err != nil {
 		s.logger.Warn("attach autopayout result", "crypto", wallet.Crypto, "payout_id", payout.ID, "error", err)
+	}
+	switch strings.ToUpper(strings.TrimSpace(anyString(res["status"]))) {
+	case PayoutFail, "FAILED", "FAILURE", "ERROR":
+		_ = s.store.MarkPayoutFail(ctx, payout.ID, payoutResultErrorText(res))
+	case PayoutPartial:
+		_ = s.store.MarkPayoutPartial(ctx, payout.ID, payoutResultErrorText(res))
 	}
 }
 
@@ -282,15 +292,22 @@ func (s *Scheduler) refreshPayoutFromTask(ctx context.Context, module *CryptoMod
 		}
 		return payout, false
 	case "SUCCESS", "PARTIAL":
-		txids := payoutTaskTxIDs(task, payout.DestAddr)
-		if len(txids) > 0 {
-			if err := s.store.SetPayoutTaskAndTxIDs(ctx, payout.ID, taskID, txids); err != nil {
+		details := payoutTaskTxDetails(task, payout.Crypto, payout.DestAddr)
+		txids := payoutTxIDsFromDetails(details)
+		if len(details) > 0 {
+			if err := s.store.SetPayoutTaskAndTxDetails(ctx, payout.ID, taskID, details); err != nil {
 				s.logger.Warn("attach payout task txids", "payout_id", payout.ID, "task_id", taskID, "error", err)
 			} else if loaded, err := s.store.PayoutByID(ctx, payout.ID); err == nil {
 				payout = loaded
 			}
 		}
-		if status == "PARTIAL" && len(txids) == 0 {
+		if status == "PARTIAL" {
+			if len(txids) > 0 {
+				if err := s.store.MarkPayoutPartial(ctx, payout.ID, payoutTaskFailureMessage(task, payout.DestAddr)); err != nil {
+					s.logger.Warn("mark partial payout", "payout_id", payout.ID, "task_id", taskID, "error", err)
+				}
+				return payout, false
+			}
 			if message := payoutTaskFailureForDestination(task, payout.DestAddr); message != "" {
 				if err := s.store.MarkPayoutFail(ctx, payout.ID, message); err != nil {
 					s.logger.Warn("mark partial payout failure", "payout_id", payout.ID, "task_id", taskID, "error", err)
@@ -303,30 +320,62 @@ func (s *Scheduler) refreshPayoutFromTask(ctx context.Context, module *CryptoMod
 }
 
 func (s *Scheduler) confirmedPayoutTxID(ctx context.Context, module *CryptoModule, payout Payout) string {
+	first := ""
+	pending := 0
 	for _, tx := range payout.Transactions {
 		if tx.TxID == "" {
 			continue
 		}
-		confirmations, err := s.crypto.Confirmations(ctx, module, tx.TxID)
-		if err == nil && confirmations > s.cfg.MinConfirmationBlockForPayout {
-			return tx.TxID
+		if strings.EqualFold(tx.Kind, "gas_topup") || strings.EqualFold(tx.Status, PayoutFail) {
+			continue
 		}
+		if first == "" {
+			first = tx.TxID
+		}
+		confirmations, err := s.crypto.Confirmations(ctx, module, tx.TxID)
+		if err != nil || confirmations <= s.cfg.MinConfirmationBlockForPayout {
+			pending++
+		}
+	}
+	if first != "" && pending == 0 {
+		return first
 	}
 	return ""
 }
 
 func payoutTaskTxIDs(task map[string]any, destination string) []string {
+	return payoutTxIDsFromDetails(payoutTaskTxDetails(task, "", destination))
+}
+
+func payoutTaskTxDetails(task map[string]any, crypto string, destination string) []PayoutTx {
 	result := task["result"]
+	details := payoutTxDetailsFromAny(result, crypto, destination)
+	if len(details) > 0 {
+		return details
+	}
 	queues := payoutTxIDsByDestination(result)
 	if len(queues) > 0 {
-		return popPayoutTxIDs(queues, destination)
+		return payoutTxDetailsFromTxIDs(popPayoutTxIDs(queues, destination), crypto, destination)
 	}
 	if resultMap, ok := result.(map[string]any); ok {
 		if _, ok := resultMap["results"]; ok {
 			return nil
 		}
 	}
-	return txIDsFromAny(result)
+	return payoutTxDetailsFromTxIDs(txIDsFromAny(result), crypto, destination)
+}
+
+func payoutTxIDsFromDetails(details []PayoutTx) []string {
+	out := make([]string, 0, len(details))
+	for _, detail := range details {
+		if strings.EqualFold(detail.Kind, "gas_topup") {
+			continue
+		}
+		if strings.TrimSpace(detail.TxID) != "" {
+			out = append(out, detail.TxID)
+		}
+	}
+	return uniqueNonEmptyStrings(out)
 }
 
 func payoutTaskFailureMessage(task map[string]any, destination string) string {

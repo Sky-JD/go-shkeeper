@@ -291,20 +291,20 @@ func (h *HTTPHandler) apiPayouts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(payouts))
 	for _, payout := range payouts {
-		txids := make([]string, 0, len(payout.Transactions))
-		for _, tx := range payout.Transactions {
-			txids = append(txids, tx.TxID)
-		}
+		fee, feeAsset, _ := h.store.PayoutFee(r.Context(), payout.ID)
 		out = append(out, map[string]any{
-			"id":          payout.ID,
-			"amount":      payout.Amount.String(),
-			"crypto":      payout.Crypto,
-			"destination": payout.DestAddr,
-			"external_id": nullStringValue(payout.ExternalID),
-			"task_id":     nullStringValue(payout.TaskID),
-			"status":      payout.Status,
-			"txids":       txids,
-			"created_at":  payout.CreatedAt.Format(time.RFC3339),
+			"id":           payout.ID,
+			"amount":       payout.Amount.String(),
+			"crypto":       payout.Crypto,
+			"destination":  payout.DestAddr,
+			"external_id":  nullStringValue(payout.ExternalID),
+			"task_id":      nullStringValue(payout.TaskID),
+			"status":       payout.Status,
+			"txids":        payoutTxIDs(payout),
+			"transactions": payoutTxDetailsJSON(payout.Transactions),
+			"fee":          payoutFeeString(fee, feeAsset),
+			"fee_asset":    feeAsset,
+			"created_at":   payout.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "payouts": out})

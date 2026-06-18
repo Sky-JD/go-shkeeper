@@ -190,7 +190,7 @@
             </div>
             <div class="wallet-grid">
               <button
-                v-for="wallet in wallets"
+                v-for="wallet in visibleWallets"
                 :key="wallet.name"
                 class="wallet-card"
                 :class="{ active: state.selectedCrypto === wallet.name }"
@@ -217,6 +217,7 @@
                   </div>
                 </div>
               </button>
+              <div v-if="!visibleWallets.length" class="empty compact-empty">暂无启用币种</div>
             </div>
           </section>
 
@@ -318,6 +319,16 @@
                       <span>完整密钥</span>
                       <input v-model="serverForm.key" autocomplete="off" />
                     </label>
+                    <div class="actions wide">
+                      <button class="btn" type="button" @click="downloadWalletBackup(false)">
+                        <Download :size="16" />
+                        Backup
+                      </button>
+                      <button class="btn danger" type="button" @click="downloadWalletBackup(true)">
+                        <KeyRound :size="16" />
+                        Export keys
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -597,6 +608,15 @@
                           <p><span>金额</span><strong>{{ payout.amount }} {{ payout.crypto }}</strong></p>
                           <p><span>地址</span><strong class="mono">{{ payout.destination }}</strong></p>
                           <p><span>TxID</span><strong class="mono">{{ (payout.txids || []).join(", ") || "-" }}</strong></p>
+                          <div v-if="(payout.transactions || []).length" class="tx-detail-list">
+                            <div v-for="tx in payout.transactions" :key="tx.id || `${tx.kind}-${tx.txid}-${tx.amount}`" class="tx-detail-row">
+                              <span class="badge muted">{{ tx.kind || "payout" }}</span>
+                              <span class="mono">{{ tx.txid || "-" }}</span>
+                              <span>{{ formatAmount(tx.amount) }} {{ tx.crypto || payout.crypto }}</span>
+                              <span>{{ tx.status }}</span>
+                              <span v-if="tx.error" class="text-bad">{{ tx.error }}</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -639,8 +659,8 @@
                 <input v-model="payoutForm.destination" />
               </label>
               <label class="field">
-                <span>手续费</span>
-                <input v-model="payoutForm.fee" />
+                <span>预计手续费</span>
+                <input :value="payoutQuoteFee ? `${formatAmount(payoutQuoteFee)} ${payoutQuoteFeeAsset}` : ''" readonly />
               </label>
               <label class="field">
                 <span>外部 ID</span>
@@ -704,6 +724,7 @@
                   <option value="">全部</option>
                   <option value="IN_PROGRESS">IN_PROGRESS</option>
                   <option value="SUCCESS">SUCCESS</option>
+                  <option value="PARTIAL">PARTIAL</option>
                   <option value="FAIL">FAIL</option>
                 </select>
               </label>
@@ -727,6 +748,7 @@
                   <th>时间</th>
                   <th>币种</th>
                   <th>金额</th>
+                  <th>手续费</th>
                   <th>目标地址</th>
                   <th>状态</th>
                   <th>TxID</th>
@@ -738,9 +760,21 @@
                   <td data-label="时间">{{ formatTime(payout.created_at) }}</td>
                   <td data-label="币种">{{ payout.crypto }}</td>
                   <td data-label="金额">{{ payout.amount }}</td>
+                  <td data-label="手续费">{{ payout.fee ? `${formatAmount(payout.fee)} ${payout.fee_asset || ''}` : '-' }}</td>
                   <td data-label="目标地址"><span class="mono">{{ payout.destination }}</span></td>
                   <td data-label="状态"><span class="badge" :class="payoutTone(payout.status)">{{ payout.status }}</span></td>
-                  <td data-label="TxID"><span class="mono">{{ (payout.txids || []).join(", ") || "-" }}</span></td>
+                  <td data-label="TxID">
+                    <span class="mono">{{ (payout.txids || []).join(", ") || "-" }}</span>
+                    <div v-if="(payout.transactions || []).length" class="tx-detail-list">
+                      <div v-for="tx in payout.transactions" :key="tx.id || `${tx.kind}-${tx.txid}-${tx.amount}`" class="tx-detail-row">
+                        <span class="badge muted">{{ tx.kind || "payout" }}</span>
+                        <span class="mono">{{ tx.txid || "-" }}</span>
+                        <span>{{ formatAmount(tx.amount) }} {{ tx.crypto || payout.crypto }}</span>
+                        <span>{{ tx.status }}</span>
+                        <span v-if="tx.error" class="text-bad">{{ tx.error }}</span>
+                      </div>
+                    </div>
+                  </td>
                   <td data-label="错误"><span class="text-bad">{{ payout.error }}</span></td>
                 </tr>
               </tbody>
@@ -926,6 +960,7 @@ import {
   ChartNoAxesCombined,
   ChevronDown,
   Copy,
+  Download,
   KeyRound,
   Plus,
   RefreshCw,
@@ -1022,15 +1057,17 @@ const importForm = reactive({
 const bulk = reactive({ source: "", fee: "", fee_policy: "" });
 const orderFilters = reactive({ external_id: "", status: "", crypto: "", from_date: "", to_date: "", limit: 30 });
 const payoutFilters = reactive({ crypto: "", status: "", dest_addr: "", txid: "", limit: 50 });
-const payoutForm = reactive({ crypto: "", amount: "", destination: "", fee: "", external_id: "", callback_url: "" });
+const payoutForm = reactive({ crypto: "", amount: "", destination: "", external_id: "", callback_url: "" });
 const settingsForm = reactive({ username: "", current_password: "", new_password: "", confirm_password: "" });
 
 const fiats = computed(() => state.bootstrap.fiats?.length ? state.bootstrap.fiats : ["USD"]);
-const selectedWallet = computed(() => state.walletDetail || wallets.value.find((item) => item.name === state.selectedCrypto));
+const enabledWallets = computed(() => wallets.value.filter((item) => item.enabled));
+const visibleWallets = enabledWallets;
+const selectedWallet = computed(() => state.walletDetail || visibleWallets.value.find((item) => item.name === state.selectedCrypto));
 const selectedPayoutWallet = computed(() => wallets.value.find((item) => item.name === payoutForm.crypto));
 const payoutQuoteBalance = computed(() => payoutQuote.value?.balance ?? selectedPayoutWallet.value?.balance ?? "");
 const payoutQuoteMaxSingle = computed(() => payoutQuote.value?.max_single_account ?? payoutQuoteBalance.value);
-const payoutQuoteFee = computed(() => payoutQuote.value?.fee || payoutForm.fee || "");
+const payoutQuoteFee = computed(() => payoutQuote.value?.fee || "");
 const payoutQuoteFeeAsset = computed(() => payoutQuote.value?.fee_asset || payoutForm.crypto || "");
 const payoutAmountExceedsSingleAccount = computed(() => decimalGreaterThan(payoutForm.amount, payoutQuoteMaxSingle.value));
 const payoutQuoteUnavailable = computed(() => payoutQuote.value?.status === "disabled" || payoutQuote.value?.cache_ready === false);
@@ -1068,7 +1105,6 @@ const activationNotice = computed(() => {
     sample: Array.isArray(activation.sample_inactive) ? activation.sample_inactive : []
   };
 });
-const enabledWallets = computed(() => wallets.value.filter((item) => item.enabled));
 const primaryDocCrypto = computed(() => enabledWallets.value.find((item) => item.name === "USDT")?.name || enabledWallets.value[0]?.name || "USDT");
 const apiBaseURL = computed(() => window.location.origin);
 const merchantApiKey = computed(() => {
@@ -1574,7 +1610,7 @@ const fullApiReferenceText = computed(() => {
     callbacks
   ].join("\n");
 });
-const healthyWallets = computed(() => wallets.value.filter((item) => statusTone(item) === "text-ok"));
+const healthyWallets = computed(() => visibleWallets.value.filter((item) => statusTone(item) === "text-ok"));
 const payoutDestinations = computed(() => state.walletDetail?.payout_destinations || []);
 const selectedServiceCount = computed(() => cryptoCatalog.value.filter((item) => item.selected).length);
 const displayCryptoCommand = computed(() => cryptoApply.short_command || cryptoApply.command);
@@ -1712,12 +1748,41 @@ async function loadWallets(options = {}) {
   await loadCryptoCatalog();
   const data = await api("/api/v1/admin/wallets");
   wallets.value = data.wallets || [];
-  if (!state.selectedCrypto && wallets.value.length) state.selectedCrypto = wallets.value[0].name;
-  const defaultPayoutWallet = wallets.value.find((item) => item.enabled) || wallets.value[0];
+  scheduleWalletBalanceRefresh(wallets.value);
+  const activeWallets = wallets.value.filter((item) => item.enabled);
+  const selectedVisible = activeWallets.some((item) => item.name === state.selectedCrypto);
+  if (!selectedVisible) {
+    state.selectedCrypto = activeWallets[0]?.name || "";
+    state.walletDetail = null;
+  }
+  const defaultPayoutWallet = activeWallets[0];
   if ((!payoutForm.crypto || !wallets.value.some((item) => item.name === payoutForm.crypto && item.enabled)) && defaultPayoutWallet) {
     payoutForm.crypto = defaultPayoutWallet.name;
   }
   if (includeDetail && state.selectedCrypto) await loadWalletDetail(state.selectedCrypto);
+}
+
+let walletBalanceRefreshTimer = 0;
+let walletBalanceRefreshAttempts = 0;
+const walletBalanceRefreshDelayMs = 2500;
+const walletBalanceRefreshMaxAttempts = 18;
+function scheduleWalletBalanceRefresh(list) {
+  window.clearTimeout(walletBalanceRefreshTimer);
+  const needsRefresh = list.some((wallet) => wallet?.refreshing || wallet?.cache_ready === false || wallet?.balance_source === "warming");
+  if (!needsRefresh) {
+    walletBalanceRefreshAttempts = 0;
+    return;
+  }
+  if (state.view !== "wallets" || walletBalanceRefreshAttempts >= walletBalanceRefreshMaxAttempts) return;
+  walletBalanceRefreshAttempts += 1;
+  walletBalanceRefreshTimer = window.setTimeout(async () => {
+    if (state.view !== "wallets") return;
+    try {
+      await loadWallets({ includeDetail: false });
+    } catch {
+      // Keep the foreground UI quiet; manual refresh still reports errors through runTask.
+    }
+  }, walletBalanceRefreshDelayMs);
 }
 
 async function loadCryptoCatalog() {
@@ -2044,6 +2109,13 @@ async function saveServer() {
   }, "节点配置已保存");
 }
 
+function downloadWalletBackup(includePrivateKey = false) {
+  if (!state.selectedCrypto) return;
+  const crypto = encodeURIComponent(state.selectedCrypto);
+  const query = includePrivateKey ? "?include_private_key=1" : "";
+  window.location.href = `/api/v1/${crypto}/backup${query}`;
+}
+
 async function addDestination() {
   if (!destinationForm.addr.trim()) {
     notify("地址不能为空", "error");
@@ -2123,13 +2195,20 @@ async function loadPayouts() {
 }
 
 let payoutQuoteRequest = 0;
+let payoutQuoteAbort = null;
 async function loadPayoutQuote() {
   const crypto = payoutForm.crypto;
   if (!crypto) {
+    payoutQuoteAbort?.abort();
+    payoutQuoteAbort = null;
     payoutQuote.value = null;
     payoutQuoteError.value = "";
+    payoutQuoteLoading.value = false;
     return;
   }
+  payoutQuoteAbort?.abort();
+  const controller = new AbortController();
+  payoutQuoteAbort = controller;
   const request = ++payoutQuoteRequest;
   payoutQuoteLoading.value = true;
   payoutQuoteError.value = "";
@@ -2138,20 +2217,19 @@ async function loadPayoutQuote() {
       crypto,
       amount: payoutForm.amount || "0",
       address: payoutForm.destination
-    })}`);
-    if (request !== payoutQuoteRequest) return;
+    })}`, { signal: controller.signal });
+    if (controller.signal.aborted || request !== payoutQuoteRequest) return;
     payoutQuote.value = data;
-    if (data.fee !== undefined && data.fee !== null && String(data.fee).trim() !== "") {
-      payoutForm.fee = String(data.fee);
-    }
     if (data.balance_error) payoutQuoteError.value = data.balance_error;
     else if (data.fee_error) payoutQuoteError.value = data.fee_error;
   } catch (error) {
+    if (controller.signal.aborted || error.name === "AbortError") return;
     if (request === payoutQuoteRequest) {
       payoutQuoteError.value = error.message || "余额和手续费计算失败";
       payoutQuote.value = null;
     }
   } finally {
+    if (payoutQuoteAbort === controller) payoutQuoteAbort = null;
     if (request === payoutQuoteRequest) payoutQuoteLoading.value = false;
   }
 }
@@ -2175,18 +2253,20 @@ async function createPayout() {
       body: {
         destination: payoutForm.destination,
         amount: payoutForm.amount,
-        fee: payoutForm.fee,
         external_id: payoutForm.external_id,
         callback_url: payoutForm.callback_url
       }
     });
+    payoutQuoteAbort?.abort();
+    payoutQuoteAbort = null;
+    payoutQuoteRequest++;
     payoutForm.amount = "";
     payoutForm.destination = "";
-    payoutForm.fee = "";
     payoutForm.external_id = "";
     payoutForm.callback_url = "";
     await loadPayouts();
-    await loadPayoutQuote();
+    payoutQuote.value = null;
+    payoutQuoteError.value = "";
   }, "提现已发起");
 }
 
@@ -2309,7 +2389,7 @@ watch(
   () => {
     window.clearTimeout(payoutQuoteTimer);
     if (state.view !== "payouts") return;
-    payoutQuoteTimer = window.setTimeout(loadPayoutQuote, 450);
+    payoutQuoteTimer = window.setTimeout(loadPayoutQuote, 650);
   }
 );
 </script>

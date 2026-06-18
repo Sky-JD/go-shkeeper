@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,6 +64,147 @@ func TestBNBTokenConfigEnvOverride(t *testing.T) {
 	}
 }
 
+func TestSelectEVMPayoutPartsSplitsTokenAcrossGasFundedAccounts(t *testing.T) {
+	candidates := []evmSpendableAccount{
+		{
+			Account:       Account{Address: "0x0000000000000000000000000000000000000001"},
+			Balance:       decimal.RequireFromString("1.02"),
+			NativeBalance: decimal.RequireFromString("0.00002"),
+		},
+		{
+			Account:       Account{Address: "0x0000000000000000000000000000000000000002"},
+			Balance:       decimal.RequireFromString("1.02"),
+			NativeBalance: decimal.RequireFromString("0.00002"),
+		},
+		{
+			Account:       Account{Address: "0x0000000000000000000000000000000000000003"},
+			Balance:       decimal.RequireFromString("10"),
+			NativeBalance: decimal.Zero,
+		},
+	}
+	parts := selectEVMPayoutParts(candidates, decimal.RequireFromString("2.04"), decimal.RequireFromString("0.00001"), false, true)
+	if len(parts) != 2 {
+		t.Fatalf("expected split payout across 2 accounts, got %+v", parts)
+	}
+	if parts[0].Account.Address != "0x0000000000000000000000000000000000000001" || !parts[0].Amount.Equal(decimal.RequireFromString("1.02")) {
+		t.Fatalf("unexpected first part: %+v", parts[0])
+	}
+	if parts[1].Account.Address != "0x0000000000000000000000000000000000000002" || !parts[1].Amount.Equal(decimal.RequireFromString("1.02")) {
+		t.Fatalf("unexpected second part: %+v", parts[1])
+	}
+}
+
+func TestSelectEVMPayoutPartsDoesNotSplitNativePayout(t *testing.T) {
+	candidates := []evmSpendableAccount{
+		{
+			Account:       Account{Address: "0x0000000000000000000000000000000000000001"},
+			Balance:       decimal.RequireFromString("1.03"),
+			NativeBalance: decimal.RequireFromString("1.03"),
+		},
+		{
+			Account:       Account{Address: "0x0000000000000000000000000000000000000002"},
+			Balance:       decimal.RequireFromString("1.03"),
+			NativeBalance: decimal.RequireFromString("1.03"),
+		},
+	}
+	parts := selectEVMPayoutParts(candidates, decimal.RequireFromString("2.04"), decimal.RequireFromString("0.00001"), true, true)
+	if len(parts) != 0 {
+		t.Fatalf("native payout should not be split because each source needs its own gas, got %+v", parts)
+	}
+}
+
+func TestEVMPayoutSpendableSummaryIgnoresTokenAccountsWithoutGas(t *testing.T) {
+	candidates := []evmSpendableAccount{
+		{Balance: decimal.RequireFromString("1.02"), NativeBalance: decimal.RequireFromString("0.00002")},
+		{Balance: decimal.RequireFromString("1.02"), NativeBalance: decimal.Zero},
+		{Balance: decimal.RequireFromString("0.50"), NativeBalance: decimal.RequireFromString("0.00002")},
+	}
+	report := evmSpendableSummary(candidates, decimal.RequireFromString("0.00001"), false)
+	if !report.Total.Equal(decimal.RequireFromString("1.52")) || !report.Max.Equal(decimal.RequireFromString("1.02")) || report.FundedAccountCount != 2 {
+		t.Fatalf("unexpected token report: %+v", report)
+	}
+}
+
+func TestEVMGasTopupSelectsFundingAccount(t *testing.T) {
+	funders := []evmGasFundingAccount{
+		{Account: Account{Address: "0x0000000000000000000000000000000000000001"}, Available: decimal.RequireFromString("1")},
+		{Account: Account{Address: "0x0000000000000000000000000000000000000002"}, Available: decimal.RequireFromString("0.00002")},
+		{Account: Account{Address: "0x0000000000000000000000000000000000000003"}, Available: decimal.RequireFromString("0.00003")},
+	}
+	idx := selectEVMGasFundingAccount(funders, decimal.RequireFromString("0.000025"), "0x0000000000000000000000000000000000000001")
+	if idx != 2 {
+		t.Fatalf("expected third account to fund gas top-up, got index %d", idx)
+	}
+	if got := evmGasTopupTarget(decimal.RequireFromString("0.00001")); !got.Equal(decimal.RequireFromString("0.00001")) {
+		t.Fatalf("unexpected gas top-up target: %s", got)
+	}
+}
+
+func TestEVMAutoTopupSpendableSummaryIncludesGasStarvedTokenBalance(t *testing.T) {
+	candidates := []evmSpendableAccount{
+		{
+			Account:       Account{Address: "0x0000000000000000000000000000000000000001"},
+			Balance:       decimal.RequireFromString("1.02"),
+			NativeBalance: decimal.Zero,
+		},
+		{
+			Account:       Account{Address: "0x0000000000000000000000000000000000000002"},
+			Balance:       decimal.RequireFromString("1.02"),
+			NativeBalance: decimal.RequireFromString("0.00002"),
+		},
+	}
+	funders := []evmGasFundingAccount{
+		{Account: Account{Address: "0x0000000000000000000000000000000000000003"}, Available: decimal.RequireFromString("0.001")},
+	}
+	report := evmAutoTopupSpendableSummary(candidates, decimal.RequireFromString("0.00001"), decimal.RequireFromString("0.0000021"), funders)
+	if !report.Total.Equal(decimal.RequireFromString("2.04")) || report.FundedAccountCount != 2 || report.TopupAccountCount != 1 {
+		t.Fatalf("unexpected auto top-up report: %+v", report)
+	}
+	if !report.TopupAmount.Equal(decimal.RequireFromString("0.00001")) || !report.TopupTransferFee.Equal(decimal.RequireFromString("0.0000021")) {
+		t.Fatalf("unexpected auto top-up costs: %+v", report)
+	}
+}
+
+func TestFilterAccountsByActivityBalances(t *testing.T) {
+	accounts := []Account{
+		{Address: "0x0000000000000000000000000000000000000001"},
+		{Address: "0x0000000000000000000000000000000000000002"},
+		{Address: "0x0000000000000000000000000000000000000003"},
+	}
+	filtered := filterAccountsByActivityBalances(accounts, map[string]decimal.Decimal{
+		"0x0000000000000000000000000000000000000002": decimal.RequireFromString("7.61"),
+		"0x0000000000000000000000000000000000000001": decimal.RequireFromString("1.02"),
+		"0x0000000000000000000000000000000000000003": decimal.Zero,
+	})
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 active accounts, got %+v", filtered)
+	}
+	if filtered[0].Address != "0x0000000000000000000000000000000000000002" || filtered[1].Address != "0x0000000000000000000000000000000000000001" {
+		t.Fatalf("accounts should be ordered by local activity balance: %+v", filtered)
+	}
+	if empty := filterAccountsByActivityBalances(accounts, nil); len(empty) != 0 {
+		t.Fatalf("empty local activity should skip network candidates, got %+v", empty)
+	}
+}
+
+func TestEVMActualFeeSkipsReceiptLookupWhenWaitDisabled(t *testing.T) {
+	var rpcCount atomic.Int32
+	fullnode := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rpcCount.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": nil})
+	}))
+	defer fullnode.Close()
+
+	t.Setenv("EVM_PAYOUT_RECEIPT_WAIT_SECONDS", "0")
+	server := &Server{cfg: Config{FullnodeURL: fullnode.URL}, client: fullnode.Client()}
+	if fee, ok := server.evmActualFeeForTxs(t.Context(), []string{"0xabc"}, big.NewInt(1)); ok || !fee.IsZero() {
+		t.Fatalf("receipt fee should be skipped by default, fee=%s ok=%v", fee, ok)
+	}
+	if got := rpcCount.Load(); got != 0 {
+		t.Fatalf("receipt lookup should not call RPC when disabled, got %d calls", got)
+	}
+}
+
 func TestBNBTokenBalanceFallsBackToModuleAccounts(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
@@ -99,6 +241,111 @@ func TestBNBTokenBalanceFallsBackToModuleAccounts(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"balance":"9"`) {
 		t.Fatalf("balance status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestEVMSpendableUsesAsyncCacheForHTTPQuote(t *testing.T) {
+	store := testStore(t)
+	defer store.Close()
+	ctx := t.Context()
+	account := Account{
+		Module:        "BNB",
+		Crypto:        "BNB-USDT",
+		Address:       "0x000000000000000000000000000000000000dEaD",
+		PrivateKeyHex: "v1:test",
+	}
+	if err := store.AddAccount(ctx, &account); err != nil {
+		t.Fatalf("add bnb-usdt account: %v", err)
+	}
+	t.Setenv("BNB_USDT_CONTRACT", "0x0000000000000000000000000000000000000001")
+	t.Setenv("BNB_USDT_DECIMALS", "18")
+	t.Setenv("EVM_SPENDABLE_CACHE_SECONDS", "60")
+
+	firstRPCStarted := make(chan struct{}, 1)
+	releaseFirstRPC := make(chan struct{})
+	var rpcCount atomic.Int32
+	var blockedFirstRPC atomic.Bool
+	fullnode := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rpcCount.Add(1)
+		if blockedFirstRPC.CompareAndSwap(false, true) {
+			firstRPCStarted <- struct{}{}
+			<-releaseFirstRPC
+		}
+		var req struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode rpc request: %v", err)
+		}
+		result := "0x0"
+		switch req.Method {
+		case "eth_gasPrice":
+			result = "0x3b9aca00"
+		case "eth_call":
+			result = "0xde0b6b3a7640000"
+		case "eth_getBalance":
+			result = "0x2386f26fc10000"
+		default:
+			t.Fatalf("unexpected rpc method: %s", req.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
+	}))
+	defer fullnode.Close()
+
+	server := NewServer(Config{Module: "BNB", FullnodeURL: fullnode.URL, Username: "worker", Password: "secret", RequestTimeout: time.Second}, store, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	handler := server.Routes()
+	req := httptest.NewRequest(http.MethodGet, "/BNB-USDT/spendable", nil)
+	req.SetBasicAuth("worker", "secret")
+	res := httptest.NewRecorder()
+	start := time.Now()
+	handler.ServeHTTP(res, req)
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("spendable should return cached warming response quickly, took %s", elapsed)
+	}
+	if res.Code != http.StatusOK {
+		t.Fatalf("spendable status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, want := range []string{`"cache_ready":false`, `"balance_source":"warming"`, `"refreshing":true`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("warming response missing %s: %s", want, body)
+		}
+	}
+	select {
+	case <-firstRPCStarted:
+	case <-time.After(time.Second):
+		t.Fatalf("async refresh did not start")
+	}
+	close(releaseFirstRPC)
+
+	accounts := []Account{account}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		entry, ok := server.loadEVMSpendableCache("BNB-USDT", accounts)
+		if ok && entry.Payload != nil && !entry.RefreshedAt.IsZero() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for evm spendable cache")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	beforeSecondRequest := rpcCount.Load()
+	req = httptest.NewRequest(http.MethodGet, "/BNB-USDT/spendable", nil)
+	req.SetBasicAuth("worker", "secret")
+	res = httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("cached spendable status=%d body=%s", res.Code, res.Body.String())
+	}
+	body = res.Body.String()
+	for _, want := range []string{`"cache_ready":true`, `"balance":"1"`, `"balance_source":"evm_accounts_spendable"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("cached response missing %s: %s", want, body)
+		}
+	}
+	if got := rpcCount.Load(); got != beforeSecondRequest {
+		t.Fatalf("cached response should not call fullnode again, before=%d after=%d", beforeSecondRequest, got)
 	}
 }
 

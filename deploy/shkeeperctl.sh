@@ -435,7 +435,39 @@ configure_wizard() {
   printf '\nSHKeeper first-run configuration\n'
   printf '按回车使用默认值；币种可输入编号、范围、币种名、网络名或 all。\n'
 
+  local root_password default_root_password mariadb_password default_mariadb_password
+  local secret_key default_secret_key
   local host port default_cryptos selection cryptos
+  default_root_password="$(root_password_value)"
+  if [ -z "$default_root_password" ] || is_placeholder_env_value MYSQL_ROOT_PASSWORD "$default_root_password"; then
+    default_root_password="$(rand_hex 24)"
+  fi
+  if root_password_needs_attention; then
+    root_password="$(prompt_value "MariaDB root password" "$default_root_password")"
+    printf '\n'
+    env_set MYSQL_ROOT_PASSWORD "$root_password"
+    env_set MARIADB_ROOT_PASSWORD "$root_password"
+  fi
+
+  default_mariadb_password="$(env_get MARIADB_PASSWORD || true)"
+  if [ -z "$default_mariadb_password" ] || is_placeholder_env_value MARIADB_PASSWORD "$default_mariadb_password"; then
+    default_mariadb_password="$(rand_hex 24)"
+  fi
+  if env_value_needs_attention MARIADB_PASSWORD; then
+    mariadb_password="$(prompt_value "MariaDB app password" "$default_mariadb_password")"
+    printf '\n'
+    env_set MARIADB_PASSWORD "$mariadb_password"
+  fi
+
+  default_secret_key="$(env_get SECRET_KEY || true)"
+  if [ -z "$default_secret_key" ] || is_placeholder_env_value SECRET_KEY "$default_secret_key"; then
+    default_secret_key="$(rand_hex 32)"
+  fi
+  if env_value_needs_attention SECRET_KEY; then
+    secret_key="$(prompt_value "Cookie SECRET_KEY" "$default_secret_key")"
+    printf '\n'
+    env_set SECRET_KEY "$secret_key"
+  fi
   host="$(prompt_value "绑定 IP" "${SHKEEPER_HOST:-$(env_get SHKEEPER_HOST || printf '127.0.0.1')}")"
   printf '\n'
   port="$(prompt_port "${SHKEEPER_PORT:-$(env_get SHKEEPER_PORT || printf '5000')}")"
@@ -461,7 +493,7 @@ env_get() {
   local key="$1"
   local line value
   [ -f "$ENV_FILE" ] || return 1
-  line="$(grep -E "^${key}=" "$ENV_FILE" | tail -n 1 || true)"
+  line="$(sed '1s/^\xEF\xBB\xBF//' "$ENV_FILE" | grep -E "^${key}=" | tail -n 1 || true)"
   [ -n "$line" ] || return 1
   value="${line#*=}"
   value="${value%\"}"
@@ -938,10 +970,114 @@ current_cryptos() {
 }
 
 needs_initial_config() {
-  [ -z "$(env_get SHKEEPER_HOST || true)" ] && return 0
-  [ -z "$(env_get SHKEEPER_PORT || true)" ] && return 0
-  [ -z "$(env_get SHKEEPER_CRYPTOS || true)" ] && return 0
+  root_password_needs_attention && return 0
+  env_value_needs_attention MARIADB_PASSWORD && return 0
+  env_value_needs_attention SECRET_KEY && return 0
+  env_value_needs_attention SHKEEPER_HOST && return 0
+  env_value_needs_attention SHKEEPER_PORT && return 0
+  env_value_needs_attention SHKEEPER_CRYPTOS && return 0
   return 1
+}
+
+placeholder_value_for_key() {
+  case "$1" in
+    MYSQL_ROOT_PASSWORD|MARIADB_ROOT_PASSWORD) printf '%s' "change-root-password" ;;
+    MARIADB_PASSWORD) printf '%s' "change-db-password" ;;
+    SECRET_KEY) printf '%s' "change-cookie-secret" ;;
+    SHKEEPER_BACKEND_KEY) printf '%s' "change-backend-secret" ;;
+    SUGGESTED_WALLET_APIKEY) printf '%s' "change-wallet-apikey" ;;
+    *) return 1 ;;
+  esac
+}
+
+is_placeholder_env_value() {
+  local key="$1"
+  local value
+  local placeholder
+  value="$(trim "${2:-}")"
+  [ -n "$value" ] || return 1
+  placeholder="$(placeholder_value_for_key "$key" || true)"
+  [ -n "$placeholder" ] && [ "$value" = "$placeholder" ]
+}
+
+env_value_needs_attention() {
+  local key="$1"
+  local current
+  current="$(env_get "$key" || true)"
+  [ -z "$current" ] && return 0
+  is_placeholder_env_value "$key" "$current"
+}
+
+root_password_value() {
+  local mysql_password mariadb_password
+  mysql_password="$(env_get MYSQL_ROOT_PASSWORD || true)"
+  mariadb_password="$(env_get MARIADB_ROOT_PASSWORD || true)"
+  if [ -n "$mysql_password" ] && ! is_placeholder_env_value MYSQL_ROOT_PASSWORD "$mysql_password"; then
+    printf '%s' "$mysql_password"
+    return
+  fi
+  if [ -n "$mariadb_password" ] && ! is_placeholder_env_value MARIADB_ROOT_PASSWORD "$mariadb_password"; then
+    printf '%s' "$mariadb_password"
+    return
+  fi
+  printf '%s' ""
+}
+
+root_password_needs_attention() {
+  local mysql_password mariadb_password
+  mysql_password="$(env_get MYSQL_ROOT_PASSWORD || true)"
+  mariadb_password="$(env_get MARIADB_ROOT_PASSWORD || true)"
+  if [ -n "$mysql_password" ] && ! is_placeholder_env_value MYSQL_ROOT_PASSWORD "$mysql_password"; then
+    return 1
+  fi
+  if [ -n "$mariadb_password" ] && ! is_placeholder_env_value MARIADB_ROOT_PASSWORD "$mariadb_password"; then
+    return 1
+  fi
+  return 0
+}
+
+env_issue_label() {
+  local key="$1"
+  if env_value_needs_attention "$key"; then
+    if [ -n "$(env_get "$key" || true)" ]; then
+      printf '%s (placeholder)' "$key"
+    else
+      printf '%s (missing)' "$key"
+    fi
+  fi
+  return 0
+}
+
+log_env_issues() {
+  local issue
+  if root_password_needs_attention; then
+    if [ -n "$(root_password_value)" ]; then
+      log "env requires setup: MYSQL_ROOT_PASSWORD/MARIADB_ROOT_PASSWORD (placeholder)"
+    else
+      log "env requires setup: MYSQL_ROOT_PASSWORD/MARIADB_ROOT_PASSWORD (missing)"
+    fi
+  fi
+  for issue in \
+    "$(env_issue_label MARIADB_PASSWORD)" \
+    "$(env_issue_label SECRET_KEY)" \
+    "$(env_issue_label SHKEEPER_HOST)" \
+    "$(env_issue_label SHKEEPER_PORT)" \
+    "$(env_issue_label SHKEEPER_CRYPTOS)"; do
+    if [ -n "$issue" ]; then
+      log "env requires setup: $issue"
+    fi
+  done
+}
+
+set_env_value_if_missing_or_placeholder() {
+  local key="$1"
+  local value="$2"
+  if env_value_needs_attention "$key"; then
+    env_set "$key" "$value"
+    log "configured $key"
+    return
+  fi
+  env_set_default "$key" "$value"
 }
 
 write_cryptos() {
@@ -1003,19 +1139,23 @@ init_env() {
   fi
 
   local root_password mariadb_password cryptos
-  root_password="$(env_get MYSQL_ROOT_PASSWORD || true)"
+  if [ "$created_env" != "1" ] && needs_initial_config; then
+    log_env_issues
+  fi
+
+  root_password="$(root_password_value)"
   if [ -z "$root_password" ]; then
     root_password="$(rand_hex 24)"
   fi
   mariadb_password="$(env_get MARIADB_PASSWORD || true)"
-  if [ -z "$mariadb_password" ]; then
+  if [ -z "$mariadb_password" ] || is_placeholder_env_value MARIADB_PASSWORD "$mariadb_password"; then
     mariadb_password="$(rand_hex 24)"
   fi
 
-  env_set_default MYSQL_ROOT_PASSWORD "$root_password"
-  env_set_default MARIADB_ROOT_PASSWORD "$root_password"
-  env_set_default MARIADB_PASSWORD "$mariadb_password"
-  env_set_default SECRET_KEY "$(rand_hex 32)"
+  set_env_value_if_missing_or_placeholder MYSQL_ROOT_PASSWORD "$root_password"
+  set_env_value_if_missing_or_placeholder MARIADB_ROOT_PASSWORD "$root_password"
+  set_env_value_if_missing_or_placeholder MARIADB_PASSWORD "$mariadb_password"
+  set_env_value_if_missing_or_placeholder SECRET_KEY "$(rand_hex 32)"
   env_set_default SHKEEPER_BACKEND_KEY "$(rand_hex 32)"
   env_set_default SUGGESTED_WALLET_APIKEY "$(rand_hex 24)"
   env_set_default SHKEEPER_DB_MAX_OPEN_CONNS "48"
@@ -1209,6 +1349,13 @@ apply_source_archive() {
       cp -a "$ROOT_DIR/$path" "$backup_dir/$path"
     fi
   done
+  if [ -d "$ROOT_DIR/deploy" ]; then
+    while IFS= read -r path; do
+      path="${path#$ROOT_DIR/}"
+      mkdir -p "$backup_dir/$(dirname "$path")"
+      cp -a "$ROOT_DIR/$path" "$backup_dir/$path"
+    done < <(find "$ROOT_DIR/deploy" -maxdepth 1 -type f \( -name '*.local.yml' -o -name '*.modular.example.yml' -o -name 'hk-*.yml' \) 2>/dev/null || true)
+  fi
 
   for path in cmd internal web deploy Dockerfile go.mod go.sum README.md .dockerignore .gitignore; do
     rm -rf "$ROOT_DIR/$path"
@@ -1224,6 +1371,13 @@ apply_source_archive() {
       cp -a "$backup_dir/$path" "$ROOT_DIR/$path"
     fi
   done
+  if [ -d "$backup_dir/deploy" ]; then
+    while IFS= read -r path; do
+      path="${path#$backup_dir/}"
+      mkdir -p "$(dirname "$ROOT_DIR/$path")"
+      cp -a "$backup_dir/$path" "$ROOT_DIR/$path"
+    done < <(find "$backup_dir/deploy" -maxdepth 1 -type f \( -name '*.local.yml' -o -name '*.modular.example.yml' -o -name 'hk-*.yml' \) 2>/dev/null || true)
+  fi
   chmod +x "$ROOT_DIR"/deploy/*.sh >/dev/null 2>&1 || true
   log "source archive applied; preserved runtime backup: $backup_dir"
 }

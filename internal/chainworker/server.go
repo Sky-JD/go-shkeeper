@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,10 @@ type Server struct {
 	tronSpendableCache  map[string]tronSpendableCacheEntry
 	tronRefreshMu       sync.Mutex
 	tronRefreshing      map[string]bool
+	evmSpendableMu      sync.RWMutex
+	evmSpendableCache   map[string]evmSpendableCacheEntry
+	evmRefreshMu        sync.Mutex
+	evmRefreshing       map[string]bool
 }
 
 func NewServer(cfg Config, store *Store, logger *slog.Logger) *Server {
@@ -42,12 +47,17 @@ func NewServer(cfg Config, store *Store, logger *slog.Logger) *Server {
 		nodeURL:            cfg.FullnodeURL,
 		tronSpendableCache: map[string]tronSpendableCacheEntry{},
 		tronRefreshing:     map[string]bool{},
+		evmSpendableCache:  map[string]evmSpendableCacheEntry{},
+		evmRefreshing:      map[string]bool{},
 	}
 }
 
 func (s *Server) StartBackground(ctx context.Context) {
 	if s.cfg.Module == "TRON" && boolEnv("TRON_BALANCE_CACHE_ENABLED", true) {
 		go s.tronSpendableRefreshLoop(ctx)
+	}
+	if s.isEVMModule() && boolEnv("EVM_SPENDABLE_CACHE_ENABLED", true) {
+		go s.evmSpendableRefreshLoop(ctx)
 	}
 	if s.isEVMModule() && s.cfg.DepositScanEnabled {
 		go s.evmDepositScanLoop(ctx)
@@ -259,16 +269,29 @@ func (s *Server) dumpAccounts(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusInternalServerError, err)
 		return
 	}
+	includePrivateKey := queryBool(r, "include_private_key") || queryBool(r, "private_key") || queryBool(r, "decrypted")
 	out := make([]map[string]any, 0, len(accounts))
 	for _, account := range accounts {
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"id":                    account.ID,
 			"module":                account.Module,
 			"crypto":                account.Crypto,
 			"address":               account.Address,
 			"private_key_encrypted": account.PrivateKeyHex,
 			"created_at":            account.CreatedAt.Format(time.RFC3339),
-		})
+		}
+		if includePrivateKey {
+			privateKey := ""
+			if account.PrivateKeyHex != "" {
+				privateKey, err = decryptSecret(s.cfg.AccountPassword, account.PrivateKeyHex)
+				if err != nil {
+					errorJSON(w, http.StatusInternalServerError, fmt.Errorf("decrypt private key for %s: %w", account.Address, err))
+					return
+				}
+			}
+			row["private_key"] = privateKey
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "module": s.cfg.Module, "crypto": crypto, "accounts": out})
 }
@@ -399,20 +422,24 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.isEVMModule() {
-		for _, account := range accounts {
-			value, err := s.bnbBalance(r.Context(), crypto, account.Address)
-			if err == nil {
-				total = total.Add(value)
-			}
-		}
+		total = s.evmTotalBalance(r.Context(), crypto, accounts)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"balance": total.String()})
 }
 
 func (s *Server) spendable(w http.ResponseWriter, r *http.Request) {
 	crypto := strings.ToUpper(chi.URLParam(r, "crypto"))
+	if s.isEVMModule() {
+		entry, ready, err := s.cachedEVMSpendable(r.Context(), crypto, queryBool(r, "refresh") || queryBool(r, "live"))
+		if err != nil {
+			errorJSON(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.evmSpendablePayload(crypto, entry, ready, err))
+		return
+	}
 	if s.cfg.Module != "TRON" {
-		errorJSON(w, http.StatusNotFound, errors.New("spendable report is only implemented for TRON workers"))
+		errorJSON(w, http.StatusNotFound, errors.New("spendable report is only implemented for EVM/TRON workers"))
 		return
 	}
 	entry, ready, err := s.cachedTRONSpendable(r.Context(), crypto, queryBool(r, "refresh") || queryBool(r, "live"))
@@ -475,17 +502,69 @@ func (s *Server) accountsForCrypto(ctx context.Context, crypto string) ([]Accoun
 	if len(accounts) == 0 && !s.isNative(crypto) {
 		accounts, err = s.store.AccountsByModule(ctx, s.cfg.Module)
 	}
+	if err == nil && s.isEVMModule() && !s.isNative(crypto) {
+		accounts = s.filterEVMAccountsByActivity(ctx, crypto, accounts)
+	}
 	return accounts, err
 }
 
+func (s *Server) filterEVMAccountsByActivity(ctx context.Context, crypto string, accounts []Account) []Account {
+	if len(accounts) == 0 || !boolEnv("EVM_SPENDABLE_DB_CANDIDATES_ENABLED", true) {
+		return accounts
+	}
+	balances, available, err := s.store.AccountActivityBalances(ctx, crypto)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("evm account activity filter failed", "module", s.cfg.Module, "crypto", crypto, "error", err)
+		}
+		return accounts
+	}
+	if !available {
+		return accounts
+	}
+	return filterAccountsByActivityBalances(accounts, balances)
+}
+
+func filterAccountsByActivityBalances(accounts []Account, balances map[string]decimal.Decimal) []Account {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	if len(balances) == 0 {
+		return []Account{}
+	}
+	out := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if balance, ok := balances[strings.ToLower(strings.TrimSpace(account.Address))]; ok && balance.GreaterThan(decimal.Zero) {
+			out = append(out, account)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		left := balances[strings.ToLower(strings.TrimSpace(out[i].Address))]
+		right := balances[strings.ToLower(strings.TrimSpace(out[j].Address))]
+		return left.GreaterThan(right)
+	})
+	return out
+}
+
 func (s *Server) calcTxFee(w http.ResponseWriter, r *http.Request) {
+	crypto := strings.ToUpper(chi.URLParam(r, "crypto"))
+	amount, _ := decimal.NewFromString(strings.TrimSpace(chi.URLParam(r, "amount")))
+	if s.isEVMModule() {
+		fee, err := s.evmEstimateTxFee(r.Context(), crypto, amount, strings.TrimSpace(r.URL.Query().Get("address")), queryBool(r, "refresh") || queryBool(r, "live"))
+		if err != nil {
+			errorJSON(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, fee)
+		return
+	}
 	if s.cfg.Module == "TRON" {
 		fee := decimal.NewFromInt(int64Env("TRON_TOKEN_FEE_LIMIT_SUN", 100_000_000)).Div(decimal.New(1, tronNativeDecimals))
 		writeJSON(w, http.StatusOK, map[string]any{"fee": fee.String(), "fee_sun": int64Env("TRON_TOKEN_FEE_LIMIT_SUN", 100_000_000)})
 		return
 	}
 	if !s.isBitcoinLikeModule() {
-		errorJSON(w, http.StatusNotFound, errors.New("fee estimation is only implemented for Bitcoin-like/TRON workers"))
+		errorJSON(w, http.StatusNotFound, errors.New("fee estimation is only implemented for EVM/Bitcoin-like/TRON workers"))
 		return
 	}
 	fee, err := s.bitcoinEstimateTxFee(r.Context())
@@ -499,6 +578,15 @@ func (s *Server) calcTxFee(w http.ResponseWriter, r *http.Request) {
 func (s *Server) feeDepositAccount(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Module == "TRON" {
 		account, balance, err := s.tronFeeDepositAccount(r.Context())
+		if err != nil {
+			errorJSON(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"account": account.Address, "balance": balance.String()})
+		return
+	}
+	if s.isEVMModule() {
+		account, balance, err := s.evmFeeDepositAccount(r.Context())
 		if err != nil {
 			errorJSON(w, http.StatusInternalServerError, err)
 			return
@@ -525,7 +613,7 @@ func (s *Server) feeDepositAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.isBitcoinLikeModule() {
-		errorJSON(w, http.StatusNotFound, errors.New("fee deposit account is only implemented for Bitcoin-like/BTC-LIGHTNING/XMR/TRON workers"))
+		errorJSON(w, http.StatusNotFound, errors.New("fee deposit account is only implemented for EVM/Bitcoin-like/BTC-LIGHTNING/XMR/TRON workers"))
 		return
 	}
 	address, balance, err := s.bitcoinFeeDepositAccount(r.Context())
@@ -562,8 +650,18 @@ func (s *Server) payout(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.broadcastPayout(r.Context(), crypto, destination, amount, chi.URLParam(r, "fee"))
 	if err != nil {
-		resultJSON, _ := json.Marshal(map[string]any{"error": err.Error()})
-		_ = s.store.UpdateTask(r.Context(), taskID, "FAIL", resultJSON)
+		status := "FAIL"
+		if broadcastResultHasPayoutTx(result) {
+			status = "PARTIAL"
+		}
+		result.Status = status
+		result.Error = err.Error()
+		resultJSON, _ := json.Marshal(result)
+		_ = s.store.UpdateTask(r.Context(), taskID, status, resultJSON)
+		if broadcastResultHasDetails(result) {
+			writeJSON(w, http.StatusOK, map[string]any{"task_id": taskID, "status": status, "result": result, "message": err.Error()})
+			return
+		}
 		errorJSON(w, http.StatusBadGateway, err)
 		return
 	}
@@ -573,6 +671,22 @@ func (s *Server) payout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task_id": taskID, "status": "SUCCESS", "result": result})
+}
+
+func broadcastResultHasDetails(result broadcastResult) bool {
+	return len(result.TxIDs) > 0 || len(result.GasTopupTxIDs) > 0 || len(result.Details) > 0
+}
+
+func broadcastResultHasPayoutTx(result broadcastResult) bool {
+	if len(result.TxIDs) > 0 {
+		return true
+	}
+	for _, detail := range result.Details {
+		if strings.EqualFold(detail.Kind, "payout") && strings.TrimSpace(detail.TxID) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) multipayout(w http.ResponseWriter, r *http.Request) {

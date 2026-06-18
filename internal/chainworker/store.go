@@ -365,6 +365,70 @@ func (s *Store) AccountsByModule(ctx context.Context, module string) ([]Account,
 	return out, rows.Err()
 }
 
+func (s *Store) AccountActivityBalances(ctx context.Context, crypto string) (map[string]decimal.Decimal, bool, error) {
+	crypto = strings.ToUpper(strings.TrimSpace(crypto))
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT address, SUM(delta) AS balance
+		FROM (
+			SELECT LOWER(COALESCE(NULLIF(ia.addr, ''), NULLIF(i.addr, ''))) AS address, COALESCE(t.amount_crypto, 0) AS delta
+			FROM `+"`transaction`"+` t
+			JOIN invoice i ON i.id = t.invoice_id
+			LEFT JOIN invoice_address ia ON ia.invoice_id = t.invoice_id AND ia.crypto = t.crypto
+			WHERE t.crypto = ?
+			UNION ALL
+			SELECT LOWER(COALESCE(NULLIF(addr, ''), '')) AS address, COALESCE(amount_crypto, 0) AS delta
+			FROM unconfirmed_transaction
+			WHERE crypto = ?
+			UNION ALL
+			SELECT LOWER(COALESCE(NULLIF(addr, ''), '')) AS address, COALESCE(balance_crypto, 0) AS delta
+			FROM invoice
+			WHERE crypto = ? AND COALESCE(balance_crypto, 0) > 0
+			UNION ALL
+			SELECT LOWER(COALESCE(NULLIF(address, ''), '')) AS address, 0.000000000000000001 AS delta
+			FROM chain_deposit_event
+			WHERE crypto = ? AND status IN ('PENDING', 'IN_PROGRESS', 'FAILED', 'DELIVERED')
+			UNION ALL
+			SELECT LOWER(COALESCE(NULLIF(source_addr, ''), '')) AS address, -COALESCE(amount, 0) AS delta
+			FROM payout_tx
+			WHERE crypto = ? AND COALESCE(kind, 'payout') = 'payout' AND COALESCE(status, '') <> 'FAIL'
+		) account_activity
+		WHERE address IS NOT NULL AND address <> ''
+		GROUP BY address
+		HAVING balance > 0
+		ORDER BY balance DESC
+		LIMIT 10000`, crypto, crypto, crypto, crypto, crypto)
+	if err != nil {
+		if isMissingMainLedgerTable(err) {
+			return map[string]decimal.Decimal{}, false, nil
+		}
+		return nil, false, err
+	}
+	defer rows.Close()
+	out := map[string]decimal.Decimal{}
+	for rows.Next() {
+		var address string
+		var balance decimal.Decimal
+		if err := rows.Scan(&address, &balance); err != nil {
+			return nil, true, err
+		}
+		address = strings.ToLower(strings.TrimSpace(address))
+		if address != "" && balance.GreaterThan(decimal.Zero) {
+			out[address] = balance
+		}
+	}
+	return out, true, rows.Err()
+}
+
+func isMissingMainLedgerTable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "doesn't exist") ||
+		strings.Contains(msg, "no such table") ||
+		strings.Contains(msg, "unknown table")
+}
+
 func (s *Store) PendingDepositInvoiceAddresses(ctx context.Context, maxAge time.Duration, limit int) ([]DepositInvoiceAddress, error) {
 	if maxAge <= 0 {
 		maxAge = 24 * time.Hour

@@ -18,6 +18,7 @@ const (
 
 	PayoutInProgress = "IN_PROGRESS"
 	PayoutSuccess    = "SUCCESS"
+	PayoutPartial    = "PARTIAL"
 	PayoutFail       = "FAIL"
 )
 
@@ -153,12 +154,18 @@ type Payout struct {
 }
 
 type PayoutTx struct {
-	ID        int64
-	PayoutID  int64
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	TxID      string
-	Status    string
+	ID         int64
+	PayoutID   int64
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	TxID       string
+	Status     string
+	Kind       string
+	SourceAddr string
+	DestAddr   string
+	Amount     decimal.Decimal
+	Crypto     string
+	Error      string
 }
 
 type Notification struct {
