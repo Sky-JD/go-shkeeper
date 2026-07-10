@@ -49,13 +49,14 @@
 - [ ] 增加账本与发票缓存余额一致性审计命令。
 - [x] CI 增加 `go vet` 和支付/worker 关键路径 `go test -race`。
 - [ ] CI 增加固定版本的 `govulncheck`。
-- [ ] 完成 MariaDB 集成测试、Docker smoke、`git diff --check` 和 GitHub Actions 验证。
+- [x] 完成 MariaDB 集成测试、Docker smoke、`git diff --check` 和 GitHub Actions 验证。
+- [ ] GitHub Actions 升级到原生 Node.js 24 的 checkout/setup-go action 版本。
 
 ## 发布
 
 - [x] 更新本文档中的完成状态和验证证据。
-- [ ] 提交到 `codex/payment-reliability-hardening`。
-- [ ] 推送分支并创建草稿 PR。
+- [x] 提交到 `codex/payment-reliability-hardening`。
+- [x] 推送分支并创建草稿 PR：[#1](https://github.com/Sky-JD/go-shkeeper/pull/1)。
 
 ## 本地验证证据
 
@@ -64,4 +65,4 @@
 - [x] `git diff --check`
 - [x] YAML 解析：`docker-compose.example.yml`、`docker-compose.quickstart.yml`、`deploy/modular.example.yml`、`.github/workflows/go-shkeeper.yml`
 - [x] Git Bash：`bash -n deploy/shkeeperctl.sh`
-- [ ] GitHub Actions：MariaDB 集成测试、race、Docker build 与 smoke
+- [x] GitHub Actions：MariaDB 集成测试、race、Docker build、运行时审计、API smoke 与 compose 校验（[run 29080308156](https://github.com/Sky-JD/go-shkeeper/actions/runs/29080308156)）
