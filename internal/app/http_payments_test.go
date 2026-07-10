@@ -396,3 +396,32 @@ func TestValidBackendKeyFallsBackToGlobalKey(t *testing.T) {
 		t.Fatalf("global backend key should be accepted when module-specific key is unset")
 	}
 }
+
+func TestValidBackendKeyFailsClosedWhenUnset(t *testing.T) {
+	t.Setenv("SHKEEPER_BNB_USDT_BACKEND_KEY", "")
+	t.Setenv("SHKEEPER_BTC_BACKEND_KEY", "")
+	t.Setenv("SHKEEPER_BACKEND_KEY", "")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/walletnotify/BNB-USDT/tx", nil)
+	req.Header.Set("X-Shkeeper-Backend-Key", "shkeeper")
+	if (&HTTPHandler{}).validBackendKey(req, &CryptoModule{Name: "BNB-USDT"}) {
+		t.Fatalf("unset backend key must reject legacy default credentials")
+	}
+}
+
+func TestValidateCallbackURLRejectsPrivateDestinations(t *testing.T) {
+	for _, value := range []string{
+		"http://127.0.0.1/callback",
+		"http://10.0.0.1/callback",
+		"http://[::1]/callback",
+		"https://localhost/callback",
+		"https://user:pass@merchant.test/callback",
+	} {
+		if err := validateCallbackURL(value); err == nil {
+			t.Fatalf("private callback URL was accepted: %s", value)
+		}
+	}
+	if err := validateCallbackURL("https://merchant.test/callback"); err != nil {
+		t.Fatalf("public HTTPS callback was rejected: %v", err)
+	}
+}

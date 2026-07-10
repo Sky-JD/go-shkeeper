@@ -349,6 +349,74 @@ func TestEVMSpendableUsesAsyncCacheForHTTPQuote(t *testing.T) {
 	}
 }
 
+func TestEVMRPCFallsBackForArchiveReadErrors(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"error":   map[string]any{"code": -32602, "message": "Archive requests require a personal token"},
+		})
+	}))
+	defer primary.Close()
+	fallbackCalls := atomic.Int32{}
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": "0x10"})
+	}))
+	defer fallback.Close()
+
+	server := NewServer(Config{
+		Module:       "BNB",
+		FullnodeURL:  primary.URL,
+		FullnodeURLs: []string{primary.URL, fallback.URL},
+	}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	var blockHex string
+	if err := server.rpc(t.Context(), "eth_blockNumber", []any{}, &blockHex); err != nil {
+		t.Fatalf("rpc fallback failed: %v", err)
+	}
+	if blockHex != "0x10" || fallbackCalls.Load() != 1 {
+		t.Fatalf("unexpected fallback result block=%s calls=%d", blockHex, fallbackCalls.Load())
+	}
+	if server.evmReadNodeURL() != fallback.URL {
+		t.Fatalf("successful fallback should become active read endpoint: %s", server.evmReadNodeURL())
+	}
+	if server.fullnodeURL() != primary.URL {
+		t.Fatalf("read fallback must not change broadcast endpoint: %s", server.fullnodeURL())
+	}
+}
+
+func TestEVMRPCDoesNotFallbackForSendRawTransaction(t *testing.T) {
+	primaryCalls := atomic.Int32{}
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryCalls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"error":   map[string]any{"code": -32000, "message": "temporary failure"},
+		})
+	}))
+	defer primary.Close()
+	fallbackCalls := atomic.Int32{}
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackCalls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": "0xsent"})
+	}))
+	defer fallback.Close()
+
+	server := NewServer(Config{
+		Module:       "BNB",
+		FullnodeURL:  primary.URL,
+		FullnodeURLs: []string{primary.URL, fallback.URL},
+	}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	var txid string
+	if err := server.rpc(t.Context(), "eth_sendRawTransaction", []any{"0xraw"}, &txid); err == nil {
+		t.Fatalf("send raw transaction should return primary error without fallback")
+	}
+	if primaryCalls.Load() != 1 || fallbackCalls.Load() != 0 {
+		t.Fatalf("unexpected call counts: primary=%d fallback=%d", primaryCalls.Load(), fallbackCalls.Load())
+	}
+}
+
 func TestSignLegacyEVMTransaction(t *testing.T) {
 	to, err := evmAddressBytes("0x000000000000000000000000000000000000dead")
 	if err != nil {
@@ -387,6 +455,10 @@ func TestEVMDepositScannerHelpers(t *testing.T) {
 	if len(chunks) != 2 || len(chunks[0]) != 2 || len(chunks[1]) != 1 {
 		t.Fatalf("unexpected topic chunks: %+v", chunks)
 	}
+	sorted := evmSortedTopics(map[string]DepositInvoiceAddress{"b": {}, "a": {}})
+	if strings.Join(sorted, ",") != "a,b" {
+		t.Fatalf("unexpected sorted topics: %+v", sorted)
+	}
 
 	server := NewServer(Config{
 		Module:                      "BNB",
@@ -398,8 +470,131 @@ func TestEVMDepositScannerHelpers(t *testing.T) {
 		t.Fatalf("unexpected crypto ownership")
 	}
 	latestAt := time.Unix(1_000_000, 0)
-	fromBlock, toBlock := server.evmDepositScanBlockRange(1000, latestAt, latestAt.Add(-20*time.Minute))
-	if toBlock != 1000 || fromBlock <= 1 || fromBlock >= toBlock {
+	fromBlock, toBlock := server.evmDepositScanBlockRange(10_000, latestAt, latestAt.Add(-20*time.Minute))
+	if toBlock != 10_000 || fromBlock <= 1 || fromBlock >= toBlock {
 		t.Fatalf("unexpected scan block range: %d..%d", fromBlock, toBlock)
+	}
+}
+
+func TestEVMDepositScanStartBlockSkipsStaleCursorBeforeActiveWindow(t *testing.T) {
+	server := NewServer(Config{
+		Module:                      "BNB",
+		DepositScanMinConfirmations: 1,
+		DepositScanStartMargin:      10 * time.Minute,
+		EVMAverageBlockSeconds:      3,
+	}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	latestAt := time.Unix(1_000_000, 0)
+	earliest := latestAt.Add(-20 * time.Minute)
+	windowFromBlock, _ := server.evmDepositScanBlockRange(10_000, latestAt, earliest)
+	if windowFromBlock <= 1_001 {
+		t.Fatalf("test setup needs active window after stale cursor, window=%d", windowFromBlock)
+	}
+
+	fromBlock, gotWindow := server.evmDepositScanStartBlock(10_000, latestAt, earliest, 1_000, true, false)
+	if gotWindow != windowFromBlock {
+		t.Fatalf("unexpected active window: got %d want %d", gotWindow, windowFromBlock)
+	}
+	if fromBlock != windowFromBlock {
+		t.Fatalf("stale cursor should resume from active invoice window: got %d want %d", fromBlock, windowFromBlock)
+	}
+}
+
+func TestEVMDepositReconcileRechecksActiveWindowWhenCursorAhead(t *testing.T) {
+	server := NewServer(Config{
+		Module:                      "BNB",
+		DepositScanMinConfirmations: 1,
+		DepositScanStartMargin:      10 * time.Minute,
+		EVMAverageBlockSeconds:      1,
+	}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	latestAt := time.Unix(1_000_000, 0)
+	earliest := latestAt.Add(-20 * time.Minute)
+	windowFromBlock, _ := server.evmDepositScanBlockRange(10_000, latestAt, earliest)
+	cursorBlock := int64(20_000)
+
+	fromBlock, gotWindow := server.evmDepositScanStartBlock(10_000, latestAt, earliest, cursorBlock, true, true)
+	if gotWindow != windowFromBlock {
+		t.Fatalf("unexpected active window: got %d want %d", gotWindow, windowFromBlock)
+	}
+	if fromBlock != windowFromBlock {
+		t.Fatalf("active unpaid invoices should be rechecked even after cursor advanced: got %d want %d", fromBlock, windowFromBlock)
+	}
+}
+
+func TestEVMDepositIncrementalScanStartsAfterCursor(t *testing.T) {
+	server := NewServer(Config{
+		Module:                      "BNB",
+		DepositScanMinConfirmations: 1,
+		DepositScanStartMargin:      10 * time.Minute,
+		EVMAverageBlockSeconds:      1,
+	}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	latestAt := time.Unix(1_000_000, 0)
+	earliest := latestAt.Add(-20 * time.Minute)
+	cursorBlock := int64(9_900)
+
+	fromBlock, _ := server.evmDepositScanStartBlock(10_000, latestAt, earliest, cursorBlock, true, false)
+	if fromBlock != cursorBlock+1 {
+		t.Fatalf("incremental scan should start after cursor: got %d want %d", fromBlock, cursorBlock+1)
+	}
+}
+
+func TestEVMDepositScanBlockRangeCoversFastBNBBlocks(t *testing.T) {
+	server := NewServer(Config{
+		Module:                      "BNB",
+		DepositScanMinConfirmations: 1,
+		DepositScanStartMargin:      10 * time.Minute,
+	}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	latestAt := time.Unix(1_000_000, 0)
+	earliest := latestAt.Add(-2 * time.Hour)
+	fromBlock, _ := server.evmDepositScanBlockRange(107_231_812, latestAt, earliest)
+	paidBlock := int64(107_221_462)
+	if fromBlock > paidBlock {
+		t.Fatalf("BNB active-window scan should cover fast recent payment blocks: from=%d paid=%d", fromBlock, paidBlock)
+	}
+}
+
+func TestEVMTransferLogsFiltersRecipientTopics(t *testing.T) {
+	var gotFilter map[string]any
+	rpc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode rpc request: %v", err)
+		}
+		params, ok := req["params"].([]any)
+		if !ok || len(params) != 1 {
+			t.Fatalf("unexpected params: %#v", req["params"])
+		}
+		gotFilter, ok = params[0].(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected filter: %#v", params[0])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      "go-chain-worker",
+			"result":  []any{},
+		})
+	}))
+	defer rpc.Close()
+
+	server := NewServer(Config{Module: "BNB", FullnodeURL: rpc.URL}, nil, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	recipients := []string{
+		"0x00000000000000000000000000000000000000000000000000000000000000a1",
+		"0x00000000000000000000000000000000000000000000000000000000000000b2",
+	}
+	if _, err := server.evmTransferLogs(t.Context(), "0x55D398326F99059fF775485246999027B3197955", 10, 20, recipients); err != nil {
+		t.Fatalf("evmTransferLogs: %v", err)
+	}
+	if gotFilter["address"] != "0x55d398326f99059ff775485246999027b3197955" || gotFilter["fromBlock"] != "0xa" || gotFilter["toBlock"] != "0x14" {
+		t.Fatalf("unexpected filter bounds/address: %#v", gotFilter)
+	}
+	topics, ok := gotFilter["topics"].([]any)
+	if !ok || len(topics) != 3 {
+		t.Fatalf("unexpected topics: %#v", gotFilter["topics"])
+	}
+	if topics[0] != evmTransferTopic || topics[1] != nil {
+		t.Fatalf("unexpected topic prefix: %#v", topics)
+	}
+	gotRecipients, ok := topics[2].([]any)
+	if !ok || len(gotRecipients) != 2 || gotRecipients[0] != recipients[0] || gotRecipients[1] != recipients[1] {
+		t.Fatalf("unexpected recipient topics: %#v", topics[2])
 	}
 }

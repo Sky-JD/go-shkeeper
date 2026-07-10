@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -74,13 +76,6 @@ func (h *HTTPHandler) recordConfirmedTransaction(r *http.Request, module *Crypto
 	if externalID != "" && invoice.ExternalID != externalID {
 		return Transaction{}, Invoice{}, false, errors.New("external_id does not match invoice address")
 	}
-	existing, err := h.store.ExistingTransaction(ctx, module.Name, txid, invoice.ID)
-	if err == nil {
-		return existing, invoice, true, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Transaction{}, Invoice{}, false, err
-	}
 	wallet, err := h.store.WalletByCrypto(ctx, invoice.Crypto)
 	if err != nil {
 		return Transaction{}, Invoice{}, false, err
@@ -107,28 +102,11 @@ func (h *HTTPHandler) recordConfirmedTransaction(r *http.Request, module *Crypto
 		CallbackConfirmed:     false,
 		Addr:                  addr,
 	}
-	if err := h.store.AddTransaction(ctx, &tx); err != nil {
-		if isDuplicateSchemaError(err) || strings.Contains(strings.ToLower(err.Error()), "unique") {
-			existing, err := h.store.ExistingTransaction(ctx, module.Name, txid, invoice.ID)
-			return existing, invoice, true, err
-		}
+	invoice, duplicate, err := h.store.ApplyConfirmedTransaction(ctx, &tx, wallet.LLimit, wallet.ULimit)
+	if err != nil {
 		return Transaction{}, Invoice{}, false, err
 	}
-	newFiat := invoice.BalanceFiat.Add(amountFiat)
-	newCrypto := invoice.BalanceCrypto
-	if module.Name == invoice.Crypto {
-		newCrypto = newCrypto.Add(amount)
-	}
-	status := invoiceStatus(newFiat, invoice.AmountFiat, wallet.LLimit, wallet.ULimit)
-	if err := h.store.UpdateInvoiceBalance(ctx, invoice.ID, newFiat, newCrypto, status); err != nil {
-		return Transaction{}, Invoice{}, false, err
-	}
-	_ = h.store.DeleteUnconfirmed(ctx, module.Name, txid)
-	invoice.BalanceFiat = newFiat
-	invoice.BalanceCrypto = newCrypto
-	invoice.Status = status
-	tx.Invoice = &invoice
-	return tx, invoice, false, nil
+	return tx, invoice, duplicate, nil
 }
 
 func invoiceStatus(balanceFiat, amountFiat, llimit, ulimit decimal.Decimal) string {
@@ -461,6 +439,18 @@ func validateCallbackURL(value string) error {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("Invalid callback_url scheme: %s", value)
 	}
+	if parsed.User != nil {
+		return fmt.Errorf("Invalid callback_url userinfo: %s", value)
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return fmt.Errorf("Invalid callback_url private host: %s", value)
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() {
+			return fmt.Errorf("Invalid callback_url private address: %s", value)
+		}
+	}
 	return nil
 }
 
@@ -549,9 +539,9 @@ func (h *HTTPHandler) validBackendKey(r *http.Request, module *CryptoModule) boo
 		specific = os.Getenv("SHKEEPER_BTC_BACKEND_KEY")
 	}
 	if specific == "" {
-		specific = "shkeeper"
+		return false
 	}
-	return key == specific
+	return subtle.ConstantTimeCompare([]byte(key), []byte(specific)) == 1
 }
 
 func anyString(v any) string {

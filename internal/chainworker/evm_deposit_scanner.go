@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -100,24 +101,33 @@ func (s *Server) evmDepositScanLoop(ctx context.Context) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
+	reconcileInterval := s.cfg.DepositScanReconcileInterval
+	if reconcileInterval <= 0 {
+		reconcileInterval = 10 * time.Minute
+	}
 	s.logger.Info("evm deposit indexer enabled",
 		"module", s.cfg.Module,
 		"interval", interval.String(),
+		"reconcile_interval", reconcileInterval.String(),
 		"max_invoice_age", s.cfg.DepositScanMaxInvoiceAge.String(),
 		"active_address_limit", s.cfg.DepositScanBatchSize,
 		"block_step", s.cfg.DepositScanBlockStep,
 		"min_confirmations", s.depositScanMinConfirmations(),
 	)
-	s.scanEVMDeposits(ctx)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	s.scanEVMDeposits(ctx, true)
+	fastTicker := time.NewTicker(interval)
+	reconcileTicker := time.NewTicker(reconcileInterval)
+	defer fastTicker.Stop()
+	defer reconcileTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			s.logger.Info("evm deposit indexer stopped", "module", s.cfg.Module)
 			return
-		case <-ticker.C:
-			s.scanEVMDeposits(ctx)
+		case <-fastTicker.C:
+			s.scanEVMDeposits(ctx, false)
+		case <-reconcileTicker.C:
+			s.scanEVMDeposits(ctx, true)
 		}
 	}
 }
@@ -147,7 +157,7 @@ func (s *Server) evmDepositDispatchLoop(ctx context.Context) {
 	}
 }
 
-func (s *Server) scanEVMDeposits(ctx context.Context) {
+func (s *Server) scanEVMDeposits(ctx context.Context, reconcile bool) {
 	indexes, err := s.activeEVMDepositIndexes(ctx)
 	if err != nil {
 		s.logger.Warn("evm deposit indexer failed to load active invoice addresses", "module", s.cfg.Module, "error", err)
@@ -171,7 +181,7 @@ func (s *Server) scanEVMDeposits(ctx context.Context) {
 		latestAt = time.Now()
 	}
 	for crypto, index := range indexes {
-		if err := s.scanEVMDepositCrypto(ctx, crypto, index, latestAt, latest, toBlock); err != nil {
+		if err := s.scanEVMDepositCrypto(ctx, crypto, index, latestAt, latest, toBlock, reconcile); err != nil {
 			s.logger.Warn("evm deposit indexer crypto pass failed", "module", s.cfg.Module, "crypto", crypto, "error", err)
 		}
 	}
@@ -215,7 +225,7 @@ func (s *Server) activeEVMDepositIndexes(ctx context.Context) (map[string]evmAct
 	return indexes, nil
 }
 
-func (s *Server) scanEVMDepositCrypto(ctx context.Context, crypto string, index evmActiveAddressIndex, latestAt time.Time, latest int64, toBlock int64) error {
+func (s *Server) scanEVMDepositCrypto(ctx context.Context, crypto string, index evmActiveAddressIndex, latestAt time.Time, latest int64, toBlock int64, reconcile bool) error {
 	if len(index.ByTopic) == 0 {
 		return nil
 	}
@@ -228,11 +238,22 @@ func (s *Server) scanEVMDepositCrypto(ctx context.Context, crypto string, index 
 	if err != nil {
 		return err
 	}
-	fromBlock := cursorBlock + 1
-	if !hasCursor || fromBlock < 1 {
-		fromBlock, _ = s.evmDepositScanBlockRange(latest, latestAt, index.Earliest)
+	fromBlock, windowFromBlock := s.evmDepositScanStartBlock(latest, latestAt, index.Earliest, cursorBlock, hasCursor, reconcile)
+	if !reconcile && hasCursor && cursorBlock+1 < windowFromBlock {
+		s.logger.Warn("evm deposit indexer cursor lagged behind active invoice window; resuming from active window",
+			"module", s.cfg.Module,
+			"crypto", crypto,
+			"cursor_block", cursorBlock,
+			"window_from_block", windowFromBlock,
+			"resume_from_block", fromBlock,
+		)
 	}
 	if fromBlock > toBlock {
+		return nil
+	}
+	recipientTopics := evmSortedTopics(index.ByTopic)
+	topicChunks := evmTopicChunks(recipientTopics, s.cfg.DepositScanAddressTopicBatch)
+	if len(topicChunks) == 0 {
 		return nil
 	}
 	step := s.cfg.DepositScanBlockStep
@@ -244,18 +265,20 @@ func (s *Server) scanEVMDepositCrypto(ctx context.Context, crypto string, index 
 		if blockEnd > toBlock {
 			blockEnd = toBlock
 		}
-		logs, err := s.evmTransferLogs(ctx, contract, blockStart, blockEnd)
-		if err != nil {
-			return err
-		}
 		inserted := 0
-		for _, log := range logs {
-			ok, err := s.indexEVMDepositLog(ctx, crypto, contract, log, latest, index)
+		for _, topics := range topicChunks {
+			logs, err := s.evmTransferLogs(ctx, contract, blockStart, blockEnd, topics)
 			if err != nil {
 				return err
 			}
-			if ok {
-				inserted++
+			for _, log := range logs {
+				ok, err := s.indexEVMDepositLog(ctx, crypto, contract, log, latest, index)
+				if err != nil {
+					return err
+				}
+				if ok {
+					inserted++
+				}
 			}
 		}
 		if err := s.store.UpsertDepositScanCursor(ctx, s.cfg.Module, crypto, contract, blockEnd); err != nil {
@@ -266,6 +289,21 @@ func (s *Server) scanEVMDepositCrypto(ctx context.Context, crypto string, index 
 		}
 	}
 	return nil
+}
+
+func (s *Server) evmDepositScanStartBlock(latest int64, latestAt time.Time, earliest time.Time, cursorBlock int64, hasCursor bool, reconcile bool) (int64, int64) {
+	windowFromBlock, _ := s.evmDepositScanBlockRange(latest, latestAt, earliest)
+	fromBlock := windowFromBlock
+	if hasCursor && !reconcile {
+		fromBlock = cursorBlock + 1
+		if fromBlock < windowFromBlock {
+			fromBlock = windowFromBlock
+		}
+	}
+	if fromBlock < 1 {
+		fromBlock = 1
+	}
+	return fromBlock, windowFromBlock
 }
 
 func (s *Server) indexEVMDepositLog(ctx context.Context, crypto string, contract string, log evmDepositLog, latest int64, index evmActiveAddressIndex) (bool, error) {
@@ -358,12 +396,16 @@ func (s *Server) dispatchEVMDepositEvent(ctx context.Context, event DepositEvent
 	s.logger.Info("evm deposit dispatcher delivered event", "module", s.cfg.Module, "event", describeDepositEvent(event))
 }
 
-func (s *Server) evmTransferLogs(ctx context.Context, contract string, fromBlock int64, toBlock int64) ([]evmDepositLog, error) {
+func (s *Server) evmTransferLogs(ctx context.Context, contract string, fromBlock int64, toBlock int64, recipientTopics []string) ([]evmDepositLog, error) {
+	topics := []any{evmTransferTopic}
+	if len(recipientTopics) > 0 {
+		topics = []any{evmTransferTopic, nil, recipientTopics}
+	}
 	filter := map[string]any{
 		"fromBlock": fmt.Sprintf("0x%x", fromBlock),
 		"toBlock":   fmt.Sprintf("0x%x", toBlock),
 		"address":   strings.ToLower(contract),
-		"topics":    []any{evmTransferTopic},
+		"topics":    topics,
 	}
 	var logs []evmDepositLog
 	if err := s.rpc(ctx, "eth_getLogs", []any{filter}, &logs); err != nil {
@@ -412,7 +454,10 @@ func (s *Server) evmDepositScanBlockRange(latest int64, latestAt time.Time, earl
 	}
 	seconds := int64(span.Seconds())
 	blocksBack := (seconds + avg - 1) / avg
-	blocksBack += 64
+	if blocksBack < 1 {
+		blocksBack = 1
+	}
+	blocksBack = blocksBack*2 + 128
 	fromBlock := latest - blocksBack
 	if fromBlock < 1 {
 		fromBlock = 1
@@ -470,6 +515,18 @@ func evmTransferToTopic(address string) string {
 		return ""
 	}
 	return "0x" + strings.Repeat("0", 24) + strings.ToLower(value)
+}
+
+func evmSortedTopics(index map[string]DepositInvoiceAddress) []string {
+	topics := make([]string, 0, len(index))
+	for topic := range index {
+		topic = strings.ToLower(strings.TrimSpace(topic))
+		if topic != "" {
+			topics = append(topics, topic)
+		}
+	}
+	sort.Strings(topics)
+	return topics
 }
 
 func evmTopicChunks(values []string, size int) [][]string {

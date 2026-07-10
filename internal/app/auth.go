@@ -62,6 +62,7 @@ func (a *AuthManager) Login(w http.ResponseWriter, user User) {
 		Value:    payload + ":" + sig,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   a.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(exp, 0),
 	})
@@ -77,6 +78,7 @@ func (a *AuthManager) LoginPending2FA(w http.ResponseWriter, user User) {
 		Value:    payload + ":" + sig,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   a.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(exp, 0),
 	})
@@ -88,6 +90,7 @@ func (a *AuthManager) Logout(w http.ResponseWriter) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   a.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
@@ -101,6 +104,7 @@ func (a *AuthManager) ClearPending2FA(w http.ResponseWriter) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   a.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,

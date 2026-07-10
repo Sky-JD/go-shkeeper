@@ -39,13 +39,13 @@ func TestSchedulerProcessesLimitAutopayoutWithReserveAmount(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("update autopayout: %v", err)
 	}
-	var sawPayout bool
+	payoutCalls := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/BTC/balance":
 			_ = json.NewEncoder(w).Encode(map[string]any{"balance": "5.5"})
 		case "/BTC/payout/bc1auto/4.5/2":
-			sawPayout = true
+			payoutCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status":  "SUCCESS",
 				"task_id": "auto-task",
@@ -60,9 +60,10 @@ func TestSchedulerProcessesLimitAutopayoutWithReserveAmount(t *testing.T) {
 
 	scheduler := NewScheduler(cfg, store, NewCryptoRegistry(cfg, store, testLogger()), NewRateService(cfg, store, testLogger()), testLogger())
 	scheduler.processAutopayouts(ctx)
+	scheduler.processAutopayouts(ctx)
 
-	if !sawPayout {
-		t.Fatalf("autopayout worker was not called")
+	if payoutCalls != 1 {
+		t.Fatalf("autopayout worker calls=%d want=1 while first payout is still active", payoutCalls)
 	}
 	payouts, err := store.ListPayouts(ctx, "BTC", "", "bc1auto", "auto-tx", 10)
 	if err != nil {

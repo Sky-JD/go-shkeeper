@@ -177,6 +177,9 @@ Important environment variables:
 
 - `MARIADB_DATABASE_URL` or `DATABASE_URL`: MariaDB/MySQL DSN, for example `mariadb://user:pass@host:3306/shkeeper`.
 - `SECRET_KEY`: cookie signing secret.
+- `SHKEEPER_BACKEND_KEY`: shared secret used by chain workers when notifying the main service; the runtime rejects notifications when it is unset.
+- `METRICS_USERNAME` and `METRICS_PASSWORD`: required credentials for the main `/metrics` endpoint.
+- `SHKEEPER_COOKIE_SECURE`: sets the `Secure` flag on admin and 2FA cookies; enable it behind production HTTPS.
 - `SHKEEPER_LISTEN`: listen address, default `:5000`.
 - `SHKEEPER_CRYPTOS`: comma-separated enabled crypto list, for example `BTC,TRX,USDT`.
 - `SCHEDULER_ENABLED`: enables background payout and notification tasks. The quickstart compose disables it by default.

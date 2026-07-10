@@ -71,14 +71,14 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration failed: %w\n%s", err, stmt)
 		}
 	}
-	for _, stmt := range s.indexStatements() {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaError(err) {
-			return fmt.Errorf("index migration failed: %w\n%s", err, stmt)
+	for _, stmt := range s.columnMigrationStatements() {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaObjectError(err) {
+			return fmt.Errorf("column migration failed: %w\n%s", err, stmt)
 		}
 	}
-	for _, stmt := range s.columnMigrationStatements() {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaError(err) {
-			return fmt.Errorf("column migration failed: %w\n%s", err, stmt)
+	for _, stmt := range s.indexStatements() {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaObjectError(err) {
+			return fmt.Errorf("index migration failed: %w\n%s", err, stmt)
 		}
 	}
 	if err := s.rebuildOrderIndexIfEmpty(ctx); err != nil {
@@ -110,6 +110,7 @@ func (s *Store) nowExpr() string {
 
 func (s *Store) indexStatements() []string {
 	return []string{
+		"CREATE UNIQUE INDEX uq_invoice_idempotency_key ON " + s.table("invoice") + " (idempotency_key)",
 		"CREATE INDEX ix_invoice_external_id ON " + s.table("invoice") + " (external_id)",
 		"CREATE INDEX ix_invoice_status_created ON " + s.table("invoice") + " (status, created_at)",
 		"CREATE INDEX ix_invoice_order_external_updated ON " + s.table("invoice") + " (external_id, updated_at, id)",
@@ -130,6 +131,7 @@ func (s *Store) indexStatements() []string {
 		"CREATE INDEX ix_payout_order_status_updated ON " + s.table("payout") + " (status, updated_at, external_id)",
 		"CREATE INDEX ix_payout_order_crypto_updated ON " + s.table("payout") + " (crypto, updated_at, external_id)",
 		"CREATE INDEX ix_payout_crypto_amount ON " + s.table("payout") + " (crypto, amount)",
+		"CREATE INDEX ix_payout_crypto_status_created ON " + s.table("payout") + " (crypto, status, created_at)",
 		"CREATE INDEX ix_payout_status_created ON " + s.table("payout") + " (status, created_at)",
 		"CREATE INDEX ix_payout_task_status_created ON " + s.table("payout") + " (task_id, status, created_at)",
 		"CREATE UNIQUE INDEX uq_payout_tx_payout_txid ON " + s.table("payout_tx") + " (payout_id, txid)",
@@ -139,6 +141,7 @@ func (s *Store) indexStatements() []string {
 
 func (s *Store) columnMigrationStatements() []string {
 	return []string{
+		"ALTER TABLE " + s.table("invoice") + " ADD COLUMN IF NOT EXISTS idempotency_key BINARY(32) DEFAULT NULL",
 		"ALTER TABLE " + s.table("payout") + " ADD COLUMN IF NOT EXISTS fee DECIMAL(38,18) DEFAULT NULL",
 		"ALTER TABLE " + s.table("payout") + " ADD COLUMN IF NOT EXISTS fee_asset VARCHAR(64) DEFAULT NULL",
 		"ALTER TABLE " + s.table("payout_tx") + " ADD COLUMN IF NOT EXISTS kind VARCHAR(32) DEFAULT 'payout'",
@@ -150,7 +153,20 @@ func (s *Store) columnMigrationStatements() []string {
 	}
 }
 
+func isDuplicateSchemaObjectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate key name") ||
+		strings.Contains(msg, "duplicate column name") ||
+		strings.Contains(msg, "already exists")
+}
+
 func isDuplicateSchemaError(err error) bool {
+	if err == nil {
+		return false
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "duplicate") ||
 		strings.Contains(msg, "already exists") ||
@@ -173,6 +189,7 @@ func mysqlSchema() []string {
 		"CREATE TABLE IF NOT EXISTS `setting` (name VARCHAR(255) PRIMARY KEY, value TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `bitcoin_lightning_invoice` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, r_hash VARCHAR(255) UNIQUE NOT NULL, payment_request VARCHAR(512), value DECIMAL(38,18), expiry TEXT, state TEXT, creation_date TEXT, settle_date TEXT, sent_to_shkeeper BOOLEAN DEFAULT FALSE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `order_index` (external_id VARCHAR(512) NOT NULL PRIMARY KEY, sort_at DATETIME(6) NOT NULL, updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+		"CREATE TABLE IF NOT EXISTS `scheduler_lease` (name VARCHAR(128) NOT NULL PRIMARY KEY, owner VARCHAR(255) NOT NULL, lease_until DATETIME(6) NOT NULL, updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), INDEX ix_scheduler_lease_until (lease_until)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 	}
 }
 

@@ -182,6 +182,9 @@ Vite dev server 只用于前端迭代。生产运行仍由 Go 服务提供嵌入
 
 - `MARIADB_DATABASE_URL` 或 `DATABASE_URL`：MariaDB/MySQL DSN，例如 `mariadb://user:pass@host:3306/shkeeper`。
 - `SECRET_KEY`：管理后台会话 Cookie 签名密钥。
+- `SHKEEPER_BACKEND_KEY`：worker 回调主服务时使用的共享密钥；未配置时主服务会拒绝通知。
+- `METRICS_USERNAME` 和 `METRICS_PASSWORD`：主服务 `/metrics` 接口的必填认证信息。
+- `SHKEEPER_COOKIE_SECURE`：为后台与 2FA Cookie 设置 `Secure`；生产 HTTPS 反向代理后应启用。
 - `SHKEEPER_LISTEN`：监听地址，默认 `:5000`。
 - `SHKEEPER_CRYPTOS`：启用币种列表，例如 `BTC,TRX,USDT`。
 - `SCHEDULER_ENABLED`：是否启用后台提现和通知任务。quickstart 默认关闭。

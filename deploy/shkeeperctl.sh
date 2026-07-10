@@ -193,7 +193,7 @@ evm_networks_for_cryptos() {
 
 evm_default_fullnode_url() {
   case "$1" in
-    BNB) printf '%s\n' "https://bsc-rpc.publicnode.com" ;;
+    BNB) printf '%s\n' "https://bsc.rpc.blxrbdn.com" ;;
     ETH) printf '%s\n' "https://ethereum-rpc.publicnode.com" ;;
     POLYGON) printf '%s\n' "https://polygon-bor-rpc.publicnode.com" ;;
     AVALANCHE) printf '%s\n' "https://avalanche-c-chain-rpc.publicnode.com" ;;
@@ -1157,6 +1157,8 @@ init_env() {
   set_env_value_if_missing_or_placeholder MARIADB_PASSWORD "$mariadb_password"
   set_env_value_if_missing_or_placeholder SECRET_KEY "$(rand_hex 32)"
   env_set_default SHKEEPER_BACKEND_KEY "$(rand_hex 32)"
+  env_set_default METRICS_USERNAME "shkeeper"
+  env_set_default METRICS_PASSWORD "$(rand_hex 24)"
   env_set_default SUGGESTED_WALLET_APIKEY "$(rand_hex 24)"
   env_set_default SHKEEPER_DB_MAX_OPEN_CONNS "48"
   env_set_default SHKEEPER_DB_MAX_IDLE_CONNS "16"

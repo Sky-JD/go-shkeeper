@@ -153,12 +153,24 @@ func TestDecryptionKeyAndMetricsCompatEndpoints(t *testing.T) {
 		t.Fatalf("unexpected runtime status=%s err=%v", runtimeStatus, err)
 	}
 
+	t.Setenv("METRICS_USERNAME", "metrics-user")
+	t.Setenv("METRICS_PASSWORD", "metrics-password")
 	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	req.SetBasicAuth("shkeeper", "shkeeper")
+	req.SetBasicAuth("metrics-user", "metrics-password")
 	res = httptest.NewRecorder()
 	handler.Routes().ServeHTTP(res, req)
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), "go_shkeeper_wallets_total") {
 		t.Fatalf("metrics status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestMetricsAuthenticationFailsClosedWhenUnset(t *testing.T) {
+	t.Setenv("METRICS_USERNAME", "")
+	t.Setenv("METRICS_PASSWORD", "")
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.SetBasicAuth("shkeeper", "shkeeper")
+	if (&HTTPHandler{}).acceptsMetricsAuth(req) {
+		t.Fatalf("metrics must remain disabled until explicit credentials are configured")
 	}
 }
 

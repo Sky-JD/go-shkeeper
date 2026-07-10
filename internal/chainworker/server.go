@@ -25,6 +25,8 @@ type Server struct {
 	client              *http.Client
 	nodeMu              sync.RWMutex
 	nodeURL             string
+	readNodeMu          sync.RWMutex
+	readNodeURL         string
 	latestBlockMu       sync.RWMutex
 	latestBlockAt       time.Time
 	latestBlockCachedAt time.Time
@@ -45,6 +47,7 @@ func NewServer(cfg Config, store *Store, logger *slog.Logger) *Server {
 		logger:             logger,
 		client:             &http.Client{Timeout: cfg.RequestTimeout},
 		nodeURL:            cfg.FullnodeURL,
+		readNodeURL:        cfg.FullnodeURL,
 		tronSpendableCache: map[string]tronSpendableCacheEntry{},
 		tronRefreshing:     map[string]bool{},
 		evmSpendableCache:  map[string]evmSpendableCacheEntry{},
@@ -76,6 +79,12 @@ func (s *Server) Routes() http.Handler {
 		if err := s.store.db.PingContext(ctx); err != nil {
 			errorJSON(w, http.StatusServiceUnavailable, err)
 			return
+		}
+		if s.isEVMModule() && s.cfg.DepositScanEnabled {
+			if _, err := s.latestBlockNumber(ctx); err != nil {
+				errorJSON(w, http.StatusServiceUnavailable, fmt.Errorf("evm rpc not ready: %w", err))
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "module": s.cfg.Module})
 	})
@@ -995,22 +1004,90 @@ func (s *Server) nativeBalance(ctx context.Context, address string) (decimal.Dec
 }
 
 func (s *Server) rpc(ctx context.Context, method string, params []any, result any) error {
-	var resp struct {
-		Result json.RawMessage `json:"result"`
-		Error  any             `json:"error"`
+	var lastErr error
+	endpoints := []string{s.fullnodeURL()}
+	if evmRPCReadMethod(method) {
+		endpoints = s.evmReadURLs()
 	}
-	if err := s.httpJSON(ctx, http.MethodPost, s.fullnodeURL(), map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "go-chain-worker",
-		"method":  method,
-		"params":  params,
-	}, &resp); err != nil {
-		return err
+	for _, endpoint := range endpoints {
+		var resp struct {
+			Result json.RawMessage `json:"result"`
+			Error  any             `json:"error"`
+		}
+		err := s.httpJSON(ctx, http.MethodPost, endpoint, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      "go-chain-worker",
+			"method":  method,
+			"params":  params,
+		}, &resp)
+		if err == nil && resp.Error != nil {
+			err = fmt.Errorf("rpc %s error: %v", method, resp.Error)
+		}
+		if err == nil {
+			if active := s.evmReadNodeURL(); evmRPCReadMethod(method) && endpoint != active {
+				s.setEVMReadNodeURL(endpoint)
+				if s.logger != nil {
+					s.logger.Warn("switched EVM read RPC endpoint after successful fallback", "module", s.cfg.Module, "method", method, "from", active, "to", endpoint)
+				}
+			}
+			return json.Unmarshal(resp.Result, result)
+		}
+		lastErr = err
+		if !evmRPCShouldTryNext(method, err) {
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Warn("EVM RPC endpoint failed; trying fallback", "module", s.cfg.Module, "method", method, "endpoint", endpoint, "error", err)
+		}
 	}
-	if resp.Error != nil {
-		return fmt.Errorf("rpc %s error: %v", method, resp.Error)
+	if lastErr != nil {
+		return lastErr
 	}
-	return json.Unmarshal(resp.Result, result)
+	return fmt.Errorf("rpc %s failed: no fullnode URL configured", method)
+}
+
+func evmRPCReadMethod(method string) bool {
+	switch method {
+	case "eth_blockNumber", "eth_getBlockByNumber", "eth_getLogs", "eth_call", "eth_getBalance", "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_gasPrice", "eth_estimateGas", "eth_getTransactionCount":
+		return true
+	default:
+		return false
+	}
+}
+
+func evmRPCShouldTryNext(method string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if !evmRPCReadMethod(method) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"archive",
+		"limit exceeded",
+		"too many request",
+		"rate limit",
+		"timeout",
+		"connection refused",
+		"connection reset",
+		"no such host",
+		"temporary failure",
+		"returned 403",
+		"returned 408",
+		"returned 429",
+		"returned 500",
+		"returned 502",
+		"returned 503",
+		"returned 504",
+		"range too large",
+		"query range",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) fullnodeURL() string {
@@ -1027,6 +1104,40 @@ func (s *Server) setFullnodeURL(value string) {
 	s.nodeMu.Lock()
 	s.nodeURL = strings.TrimSpace(value)
 	s.nodeMu.Unlock()
+	s.setEVMReadNodeURL(value)
+}
+
+func (s *Server) evmReadNodeURL() string {
+	s.readNodeMu.RLock()
+	value := s.readNodeURL
+	s.readNodeMu.RUnlock()
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return s.fullnodeURL()
+}
+
+func (s *Server) setEVMReadNodeURL(value string) {
+	s.readNodeMu.Lock()
+	s.readNodeURL = strings.TrimSpace(value)
+	s.readNodeMu.Unlock()
+}
+
+func (s *Server) evmReadURLs() []string {
+	urls := make([]string, 0, len(s.cfg.FullnodeURLs)+2)
+	seen := map[string]struct{}{}
+	for _, endpoint := range append([]string{s.evmReadNodeURL()}, s.fullnodeURLs()...) {
+		endpoint = strings.TrimSpace(endpoint)
+		if endpoint == "" {
+			continue
+		}
+		if _, ok := seen[endpoint]; ok {
+			continue
+		}
+		seen[endpoint] = struct{}{}
+		urls = append(urls, endpoint)
+	}
+	return urls
 }
 
 func (s *Server) httpJSON(ctx context.Context, method string, url string, body any, out any) error {

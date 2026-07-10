@@ -55,6 +55,7 @@ func testStore(t *testing.T) (*Store, Config) {
 func cleanupTestTables(t *testing.T, store *Store) {
 	t.Helper()
 	tables := []string{
+		"scheduler_lease",
 		"order_index",
 		"bitcoin_lightning_invoice", "notification", "payout_destination", "payout_tx",
 		"payout", "unconfirmed_transaction", "transaction", "invoice_address",

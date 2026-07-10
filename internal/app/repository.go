@@ -235,6 +235,15 @@ func (s *Store) UpdateWalletLastPayoutAttempt(ctx context.Context, crypto string
 	return nil
 }
 
+func (s *Store) HasInProgressPayout(ctx context.Context, crypto string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE crypto = ? AND status = ? LIMIT 1", s.table("payout")), strings.ToUpper(strings.TrimSpace(crypto)), PayoutInProgress).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Store) UpsertPayoutDestination(ctx context.Context, crypto, addr, comment string) error {
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (crypto, addr, comment) VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE comment = VALUES(comment)`, s.table("payout_destination")), crypto, addr, comment)
