@@ -209,6 +209,7 @@ func TestBNBTokenBalanceFallsBackToModuleAccounts(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
 	ctx := t.Context()
+	t.Setenv("EVM_SPENDABLE_DB_CANDIDATES_ENABLED", "false")
 	if err := store.AddAccount(ctx, &Account{
 		Module:        "BNB",
 		Crypto:        "BNB",
@@ -248,6 +249,7 @@ func TestEVMSpendableUsesAsyncCacheForHTTPQuote(t *testing.T) {
 	store := testStore(t)
 	defer store.Close()
 	ctx := t.Context()
+	t.Setenv("EVM_SPENDABLE_DB_CANDIDATES_ENABLED", "false")
 	account := Account{
 		Module:        "BNB",
 		Crypto:        "BNB-USDT",

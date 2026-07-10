@@ -583,7 +583,7 @@ func TestAdminWalletDetailChecksTRONStatusBeforeBalance(t *testing.T) {
 	t.Setenv("TRON_API_SERVER_HOST", strings.TrimPrefix(backend.URL, "http://"))
 	handler := newTestHTTPHandler(t, store, cfg)
 
-	res := adminJSON(t, handler, http.MethodGet, "/api/v1/admin/wallets/USDT", nil)
+	res := adminJSON(t, handler, http.MethodGet, "/api/v1/admin/wallets/USDT?include_status=true&include_balance=true", nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("wallet detail status=%d body=%s", res.Code, res.Body.String())
 	}

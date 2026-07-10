@@ -83,6 +83,10 @@ func (h *HTTPHandler) apiAdminWalletDetail(w http.ResponseWriter, r *http.Reques
 func (h *HTTPHandler) adminWalletJSON(r *http.Request, module *CryptoModule, includeRates bool, includeBalance bool, includeStatus bool) map[string]any {
 	ctx := r.Context()
 	wallet, walletErr := h.store.WalletByCrypto(ctx, module.Name)
+	var liveStatus any
+	if includeStatus {
+		liveStatus = h.crypto.Status(ctx, module)
+	}
 	row := map[string]any{
 		"name":           module.Name,
 		"display_name":   module.DisplayName,
@@ -104,7 +108,11 @@ func (h *HTTPHandler) adminWalletJSON(r *http.Request, module *CryptoModule, inc
 		return row
 	}
 	row["enabled"] = wallet.Enabled
-	row["status"] = map[string]any{"available": wallet.Enabled}
+	if includeStatus {
+		row["status"] = liveStatus
+	} else {
+		row["status"] = map[string]any{"available": wallet.Enabled}
+	}
 	if !includeBalance {
 		if wallet.Enabled {
 			h.adminWalletCachedBalance(ctx, module, row)
@@ -112,9 +120,6 @@ func (h *HTTPHandler) adminWalletJSON(r *http.Request, module *CryptoModule, inc
 			row["balance"] = "0"
 			row["balance_source"] = "disabled"
 		}
-	}
-	if includeStatus {
-		row["status"] = h.crypto.Status(ctx, module)
 	}
 	row["api_key"] = nullStringValue(wallet.APIKey)
 	row["autopayout_enabled"] = wallet.Payout
