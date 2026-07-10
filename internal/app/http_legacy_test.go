@@ -54,7 +54,11 @@ func TestLegacyOperationalEndpoints(t *testing.T) {
 				t.Fatalf("backup used wrong worker auth: ok=%v username=%s password=%s", ok, username, password)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "accounts": []map[string]string{{"address": "bc1generated"}}})
+			account := map[string]string{"address": "bc1generated"}
+			if r.URL.Query().Get("include_private_key") == "1" {
+				account["private_key"] = "plain-private-key"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "accounts": []map[string]string{account}})
 		default:
 			t.Fatalf("unexpected backend path: %s", r.URL.Path)
 		}
@@ -108,6 +112,38 @@ func TestLegacyOperationalEndpoints(t *testing.T) {
 	res = adminJSON(t, handler, http.MethodGet, "/api/v1/BTC/backup", nil)
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), "bc1generated") {
 		t.Fatalf("backup status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	res = adminJSON(t, handler, http.MethodGet, "/api/v1/BTC/backup?include_private_key=1", nil)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("plaintext backup without admin session should be forbidden, status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/BTC/backup?include_private_key=1", nil)
+	req.SetBasicAuth("admin", "admin-password")
+	req.AddCookie(&http.Cookie{Name: "shkeeper_session", Value: "session"})
+	res = httptest.NewRecorder()
+	handler.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("plaintext backup with forged session should be forbidden, status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	user, err := store.UserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("load admin user: %v", err)
+	}
+	loginRes := httptest.NewRecorder()
+	handler.auth.Login(loginRes, user)
+	sessionCookie := responseCookie(loginRes, "shkeeper_session")
+	if sessionCookie == nil {
+		t.Fatalf("login did not create session cookie")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/BTC/backup?include_private_key=1", nil)
+	req.AddCookie(sessionCookie)
+	res = httptest.NewRecorder()
+	handler.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), "plain-private-key") {
+		t.Fatalf("plaintext backup status=%d body=%s", res.Code, res.Body.String())
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/test-callback-receiver", strings.NewReader(`{"ok":true}`))

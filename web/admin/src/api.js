@@ -2,6 +2,7 @@ export async function api(path, options = {}) {
   const init = {
     method: options.method || "GET",
     credentials: "same-origin",
+    signal: options.signal,
     headers: {
       Accept: "application/json",
       ...(options.body ? { "Content-Type": "application/json" } : {}),

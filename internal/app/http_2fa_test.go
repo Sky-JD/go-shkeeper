@@ -11,6 +11,16 @@ import (
 	"time"
 )
 
+func TestSessionCookieCanRequireHTTPS(t *testing.T) {
+	manager := NewAuthManager(Config{SecretKey: []byte("cookie-secret"), CookieSecure: true}, nil, testLogger())
+	res := httptest.NewRecorder()
+	manager.Login(res, User{ID: 1})
+	cookie := responseCookie(res, "shkeeper_session")
+	if cookie == nil || !cookie.Secure || !cookie.HttpOnly {
+		t.Fatalf("secure session cookie not emitted: %+v", cookie)
+	}
+}
+
 func TestTwoFactorSetupAndLoginFlow(t *testing.T) {
 	store, cfg := testStore(t)
 	defer store.Close()

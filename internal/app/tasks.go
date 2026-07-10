@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,12 @@ type Scheduler struct {
 	handler *HTTPHandler
 }
 
+const (
+	schedulerLeaseName          = "go-shkeeper-background"
+	schedulerLeaseTTL           = 20 * time.Second
+	schedulerLeaseRenewInterval = 5 * time.Second
+)
+
 func NewScheduler(cfg Config, store *Store, crypto *CryptoRegistry, rates *RateService, logger *slog.Logger) *Scheduler {
 	auth := NewAuthManager(cfg, store, logger)
 	handler := NewHTTPHandler(cfg, store, crypto, rates, auth, logger)
@@ -36,11 +43,11 @@ func (s *Scheduler) Start(parent context.Context) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	s.stop = cancel
-	s.every(ctx, 30*time.Second, s.updateConfirmations)
-	s.every(ctx, 30*time.Second, s.sendCallbacks)
-	s.every(ctx, 60*time.Second, s.processAutopayouts)
-	s.every(ctx, 45*time.Second, s.pollPayouts)
-	s.every(ctx, 45*time.Second, s.sendPayoutCallbacks)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runLeaderLoop(ctx)
+	}()
 }
 
 func (s *Scheduler) Stop() {
@@ -50,10 +57,71 @@ func (s *Scheduler) Stop() {
 	s.wg.Wait()
 }
 
-func (s *Scheduler) every(ctx context.Context, interval time.Duration, fn func(context.Context)) {
-	s.wg.Add(1)
+func (s *Scheduler) runLeaderLoop(ctx context.Context) {
+	hostname, _ := os.Hostname()
+	owner := fmt.Sprintf("%s-%d-%s", hostname, os.Getpid(), randomToken(8))
+	ticker := time.NewTicker(schedulerLeaseRenewInterval)
+	defer ticker.Stop()
+
+	var jobsCancel context.CancelFunc
+	var jobsWG *sync.WaitGroup
+	stopJobs := func() {
+		if jobsCancel == nil {
+			return
+		}
+		jobsCancel()
+		jobsWG.Wait()
+		jobsCancel = nil
+		jobsWG = nil
+		s.logger.Warn("scheduler leadership lost; background jobs stopped", "owner", owner)
+	}
+	updateLeadership := func() {
+		leader, err := s.store.TryAcquireSchedulerLease(ctx, schedulerLeaseName, owner, schedulerLeaseTTL)
+		if err != nil {
+			s.logger.Warn("scheduler lease unavailable", "owner", owner, "error", err)
+			stopJobs()
+			return
+		}
+		if !leader {
+			stopJobs()
+			return
+		}
+		if jobsCancel == nil {
+			jobsCancel, jobsWG = s.startScheduledJobs(ctx)
+			s.logger.Info("scheduler leadership acquired; background jobs started", "owner", owner)
+		}
+	}
+
+	updateLeadership()
+	for {
+		select {
+		case <-ctx.Done():
+			stopJobs()
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.store.ReleaseSchedulerLease(releaseCtx, schedulerLeaseName, owner)
+			cancel()
+			return
+		case <-ticker.C:
+			updateLeadership()
+		}
+	}
+}
+
+func (s *Scheduler) startScheduledJobs(parent context.Context) (context.CancelFunc, *sync.WaitGroup) {
+	ctx, cancel := context.WithCancel(parent)
+	wg := &sync.WaitGroup{}
+	s.every(ctx, wg, 30*time.Second, s.updateConfirmations)
+	s.every(ctx, wg, 30*time.Second, s.sendCallbacks)
+	s.every(ctx, wg, 60*time.Second, s.processAutopayouts)
+	s.every(ctx, wg, 45*time.Second, s.pollPayouts)
+	s.every(ctx, wg, 45*time.Second, s.sendPayoutCallbacks)
+	return cancel, wg
+}
+
+func (s *Scheduler) every(ctx context.Context, wg *sync.WaitGroup, interval time.Duration, fn func(context.Context)) {
+	wg.Add(1)
 	go func() {
-		defer s.wg.Done()
+		defer wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		fn(ctx)
@@ -145,6 +213,14 @@ func (s *Scheduler) processAutopayouts(ctx context.Context) {
 		if !autopayoutDue(wallet, time.Now().UTC()) {
 			continue
 		}
+		activePayout, err := s.store.HasInProgressPayout(ctx, wallet.Crypto)
+		if err != nil {
+			s.logger.Warn("check active payout before autopayout", "crypto", wallet.Crypto, "error", err)
+			continue
+		}
+		if activePayout {
+			continue
+		}
 		balance, _, balanceErr := s.crypto.Balance(ctx, module)
 		if balanceErr != "" || !balance.GreaterThan(decimal.Zero) {
 			continue
@@ -164,7 +240,10 @@ func (s *Scheduler) processAutopayouts(ctx context.Context) {
 func autopayoutDue(wallet Wallet, now time.Time) bool {
 	switch strings.ToLower(strings.TrimSpace(wallet.PPolicy)) {
 	case "limit":
-		return true
+		if !wallet.LastAttempt.Valid {
+			return true
+		}
+		return !wallet.LastAttempt.Time.Add(5 * time.Minute).After(now)
 	case "scheduled":
 		interval := intFromAny(nullStringValue(wallet.PCond))
 		if interval <= 0 {
@@ -232,12 +311,22 @@ func (s *Scheduler) dispatchAutopayout(ctx context.Context, module *CryptoModule
 		_ = s.store.MarkPayoutFail(ctx, payout.ID, err.Error())
 		return
 	}
-	txids := txIDsFromAny(res["result"])
-	if len(txids) == 0 {
-		txids = txIDsFromAny(res)
+	result := res["result"]
+	if result == nil {
+		result = res
 	}
-	if err := s.store.SetPayoutTaskAndTxIDs(ctx, payout.ID, anyString(res["task_id"]), txids); err != nil {
+	details := payoutTxDetailsFromAny(result, module.Name, destination)
+	if len(details) == 0 {
+		details = payoutTxDetailsFromTxIDs(txIDsFromAny(result), module.Name, destination)
+	}
+	if err := s.store.SetPayoutTaskAndTxDetails(ctx, payout.ID, anyString(res["task_id"]), details); err != nil {
 		s.logger.Warn("attach autopayout result", "crypto", wallet.Crypto, "payout_id", payout.ID, "error", err)
+	}
+	switch strings.ToUpper(strings.TrimSpace(anyString(res["status"]))) {
+	case PayoutFail, "FAILED", "FAILURE", "ERROR":
+		_ = s.store.MarkPayoutFail(ctx, payout.ID, payoutResultErrorText(res))
+	case PayoutPartial:
+		_ = s.store.MarkPayoutPartial(ctx, payout.ID, payoutResultErrorText(res))
 	}
 }
 
@@ -282,15 +371,22 @@ func (s *Scheduler) refreshPayoutFromTask(ctx context.Context, module *CryptoMod
 		}
 		return payout, false
 	case "SUCCESS", "PARTIAL":
-		txids := payoutTaskTxIDs(task, payout.DestAddr)
-		if len(txids) > 0 {
-			if err := s.store.SetPayoutTaskAndTxIDs(ctx, payout.ID, taskID, txids); err != nil {
+		details := payoutTaskTxDetails(task, payout.Crypto, payout.DestAddr)
+		txids := payoutTxIDsFromDetails(details)
+		if len(details) > 0 {
+			if err := s.store.SetPayoutTaskAndTxDetails(ctx, payout.ID, taskID, details); err != nil {
 				s.logger.Warn("attach payout task txids", "payout_id", payout.ID, "task_id", taskID, "error", err)
 			} else if loaded, err := s.store.PayoutByID(ctx, payout.ID); err == nil {
 				payout = loaded
 			}
 		}
-		if status == "PARTIAL" && len(txids) == 0 {
+		if status == "PARTIAL" {
+			if len(txids) > 0 {
+				if err := s.store.MarkPayoutPartial(ctx, payout.ID, payoutTaskFailureMessage(task, payout.DestAddr)); err != nil {
+					s.logger.Warn("mark partial payout", "payout_id", payout.ID, "task_id", taskID, "error", err)
+				}
+				return payout, false
+			}
 			if message := payoutTaskFailureForDestination(task, payout.DestAddr); message != "" {
 				if err := s.store.MarkPayoutFail(ctx, payout.ID, message); err != nil {
 					s.logger.Warn("mark partial payout failure", "payout_id", payout.ID, "task_id", taskID, "error", err)
@@ -303,30 +399,62 @@ func (s *Scheduler) refreshPayoutFromTask(ctx context.Context, module *CryptoMod
 }
 
 func (s *Scheduler) confirmedPayoutTxID(ctx context.Context, module *CryptoModule, payout Payout) string {
+	first := ""
+	pending := 0
 	for _, tx := range payout.Transactions {
 		if tx.TxID == "" {
 			continue
 		}
-		confirmations, err := s.crypto.Confirmations(ctx, module, tx.TxID)
-		if err == nil && confirmations > s.cfg.MinConfirmationBlockForPayout {
-			return tx.TxID
+		if strings.EqualFold(tx.Kind, "gas_topup") || strings.EqualFold(tx.Status, PayoutFail) {
+			continue
 		}
+		if first == "" {
+			first = tx.TxID
+		}
+		confirmations, err := s.crypto.Confirmations(ctx, module, tx.TxID)
+		if err != nil || confirmations <= s.cfg.MinConfirmationBlockForPayout {
+			pending++
+		}
+	}
+	if first != "" && pending == 0 {
+		return first
 	}
 	return ""
 }
 
 func payoutTaskTxIDs(task map[string]any, destination string) []string {
+	return payoutTxIDsFromDetails(payoutTaskTxDetails(task, "", destination))
+}
+
+func payoutTaskTxDetails(task map[string]any, crypto string, destination string) []PayoutTx {
 	result := task["result"]
+	details := payoutTxDetailsFromAny(result, crypto, destination)
+	if len(details) > 0 {
+		return details
+	}
 	queues := payoutTxIDsByDestination(result)
 	if len(queues) > 0 {
-		return popPayoutTxIDs(queues, destination)
+		return payoutTxDetailsFromTxIDs(popPayoutTxIDs(queues, destination), crypto, destination)
 	}
 	if resultMap, ok := result.(map[string]any); ok {
 		if _, ok := resultMap["results"]; ok {
 			return nil
 		}
 	}
-	return txIDsFromAny(result)
+	return payoutTxDetailsFromTxIDs(txIDsFromAny(result), crypto, destination)
+}
+
+func payoutTxIDsFromDetails(details []PayoutTx) []string {
+	out := make([]string, 0, len(details))
+	for _, detail := range details {
+		if strings.EqualFold(detail.Kind, "gas_topup") {
+			continue
+		}
+		if strings.TrimSpace(detail.TxID) != "" {
+			out = append(out, detail.TxID)
+		}
+	}
+	return uniqueNonEmptyStrings(out)
 }
 
 func payoutTaskFailureMessage(task map[string]any, destination string) string {

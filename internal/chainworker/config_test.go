@@ -159,6 +159,7 @@ func TestLoadConfigEVMDepositScannerSettings(t *testing.T) {
 	t.Setenv("SHKEEPER_BASE_URL", "http://go-shkeeper:5000")
 	t.Setenv("EVM_DEPOSIT_SCAN_ENABLED", "false")
 	t.Setenv("EVM_DEPOSIT_SCAN_INTERVAL_SECONDS", "7")
+	t.Setenv("EVM_DEPOSIT_RECONCILE_INTERVAL_SECONDS", "70")
 	t.Setenv("EVM_DEPOSIT_SCAN_MAX_INVOICE_AGE_SECONDS", "3600")
 	t.Setenv("EVM_DEPOSIT_SCAN_BATCH_SIZE", "12")
 	t.Setenv("EVM_DEPOSIT_SCAN_BLOCK_STEP", "99")
@@ -175,8 +176,8 @@ func TestLoadConfigEVMDepositScannerSettings(t *testing.T) {
 	if cfg.DepositScanEnabled {
 		t.Fatalf("scanner should be disabled by env")
 	}
-	if cfg.DepositScanInterval != 7*time.Second || cfg.DepositScanMaxInvoiceAge != time.Hour || cfg.DepositScanStartMargin != time.Minute {
-		t.Fatalf("unexpected scanner durations: interval=%s age=%s margin=%s", cfg.DepositScanInterval, cfg.DepositScanMaxInvoiceAge, cfg.DepositScanStartMargin)
+	if cfg.DepositScanInterval != 7*time.Second || cfg.DepositScanReconcileInterval != 70*time.Second || cfg.DepositScanMaxInvoiceAge != time.Hour || cfg.DepositScanStartMargin != time.Minute {
+		t.Fatalf("unexpected scanner durations: interval=%s reconcile=%s age=%s margin=%s", cfg.DepositScanInterval, cfg.DepositScanReconcileInterval, cfg.DepositScanMaxInvoiceAge, cfg.DepositScanStartMargin)
 	}
 	if cfg.DepositScanBatchSize != 12 || cfg.DepositScanBlockStep != 99 || cfg.DepositScanAddressTopicBatch != 4 || cfg.DepositScanMinConfirmations != 3 || cfg.EVMAverageBlockSeconds != 5 {
 		t.Fatalf("unexpected scanner numeric settings: %+v", cfg)
@@ -186,6 +187,18 @@ func TestLoadConfigEVMDepositScannerSettings(t *testing.T) {
 	}
 	if cfg.ShkeeperAPIBaseURL != "http://go-shkeeper:5000/api/v1" {
 		t.Fatalf("unexpected shkeeper api base url: %s", cfg.ShkeeperAPIBaseURL)
+	}
+}
+
+func TestDefaultBNBAverageBlockSecondsTracksFastBSCBlocks(t *testing.T) {
+	if got := defaultEVMAverageBlockSeconds("BNB"); got != 1 {
+		t.Fatalf("unexpected BNB average block seconds: %d", got)
+	}
+}
+
+func TestDefaultBNBFullnodeSupportsDepositHistoryReads(t *testing.T) {
+	if got := defaultFullnode("BNB"); got != "https://bsc.rpc.blxrbdn.com" {
+		t.Fatalf("unexpected BNB default fullnode: %s", got)
 	}
 }
 

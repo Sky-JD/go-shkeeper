@@ -228,9 +228,17 @@ func (h *HTTPHandler) apiPaymentRequest(w http.ResponseWriter, r *http.Request) 
 		errorJSON(w, http.StatusBadRequest, errors.New("external_id, fiat, amount and callback_url are required"))
 		return
 	}
+	if err := validateCallbackURL(req.CallbackURL); err != nil {
+		errorJSON(w, http.StatusBadRequest, err)
+		return
+	}
 	amountFiat, err := decimal.NewFromString(req.Amount)
 	if err != nil {
 		errorJSON(w, http.StatusBadRequest, err)
+		return
+	}
+	if !amountFiat.GreaterThan(decimal.Zero) {
+		errorJSON(w, http.StatusBadRequest, errors.New("amount must be positive"))
 		return
 	}
 	amountCrypto, exchangeRate, err := h.rates.Convert(r.Context(), amountFiat, strings.ToUpper(req.Fiat), module)
@@ -256,7 +264,19 @@ func (h *HTTPHandler) apiPaymentRequest(w http.ResponseWriter, r *http.Request) 
 
 func (h *HTTPHandler) upsertInvoice(r *http.Request, module *CryptoModule, externalID, fiat, callbackURL string, amountFiat, amountCrypto, exchangeRate decimal.Decimal) (Invoice, error) {
 	ctx := r.Context()
-	invoice, err := h.store.FindInvoiceByExternalCallbackFiat(ctx, externalID, callbackURL, fiat)
+	requestKey := invoiceRequestKey(externalID, callbackURL, fiat)
+	invoice, err := h.store.InvoiceByIdempotencyKey(ctx, requestKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		invoice, err = h.store.FindInvoiceByExternalCallbackFiat(ctx, externalID, callbackURL, fiat)
+		if err == nil {
+			if keyErr := h.store.SetInvoiceIdempotencyKey(ctx, invoice.ID, requestKey); keyErr != nil {
+				if !isDuplicateSchemaError(keyErr) {
+					return Invoice{}, keyErr
+				}
+				invoice, err = h.store.InvoiceByIdempotencyKey(ctx, requestKey)
+			}
+		}
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		addr, err := h.crypto.MakeAddress(ctx, module, amountCrypto)
 		if err != nil {
@@ -275,13 +295,17 @@ func (h *HTTPHandler) upsertInvoice(r *http.Request, module *CryptoModule, exter
 			ExchangeRate:  exchangeRate,
 			Status:        InvoiceUnpaid,
 		}
-		if err := h.store.CreateInvoice(ctx, &invoice); err != nil {
-			return Invoice{}, err
+		if err := h.store.CreateInvoiceWithAddress(ctx, &invoice, module.Name, addr, requestKey); err != nil {
+			if !isDuplicateSchemaError(err) {
+				return Invoice{}, err
+			}
+			invoice, err = h.store.InvoiceByIdempotencyKey(ctx, requestKey)
+			if err != nil {
+				return Invoice{}, err
+			}
+		} else {
+			return invoice, nil
 		}
-		if err := h.store.AddInvoiceAddress(ctx, invoice.ID, module.Name, addr); err != nil {
-			return Invoice{}, err
-		}
-		return invoice, nil
 	}
 	if err != nil {
 		return Invoice{}, err

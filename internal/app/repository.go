@@ -235,6 +235,15 @@ func (s *Store) UpdateWalletLastPayoutAttempt(ctx context.Context, crypto string
 	return nil
 }
 
+func (s *Store) HasInProgressPayout(ctx context.Context, crypto string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE crypto = ? AND status = ? LIMIT 1", s.table("payout")), strings.ToUpper(strings.TrimSpace(crypto)), PayoutInProgress).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Store) UpsertPayoutDestination(ctx context.Context, crypto, addr, comment string) error {
 	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (crypto, addr, comment) VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE comment = VALUES(comment)`, s.table("payout_destination")), crypto, addr, comment)
@@ -565,11 +574,49 @@ func (s *Store) CreatePayout(ctx context.Context, p *Payout) error {
 }
 
 func (s *Store) AddPayoutTx(ctx context.Context, payoutID int64, txid string) error {
-	_, err := s.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (payout_id, txid, status) VALUES (?, ?, ?)", s.table("payout_tx")), payoutID, txid, PayoutInProgress)
-	if err != nil && (isDuplicateSchemaError(err) || strings.Contains(strings.ToLower(err.Error()), "unique")) {
+	return s.AddPayoutTxDetail(ctx, payoutID, PayoutTx{TxID: txid, Status: PayoutInProgress, Kind: "payout"})
+}
+
+func (s *Store) AddPayoutTxDetail(ctx context.Context, payoutID int64, detail PayoutTx) error {
+	detail.PayoutID = payoutID
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s
+		(payout_id, txid, status, kind, source_addr, dest_addr, amount, crypto, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			status = VALUES(status),
+			kind = VALUES(kind),
+			source_addr = VALUES(source_addr),
+			dest_addr = VALUES(dest_addr),
+			amount = VALUES(amount),
+			crypto = VALUES(crypto),
+			error = VALUES(error),
+			updated_at = %s`, s.table("payout_tx"), s.nowExpr()),
+		detail.PayoutID,
+		nullOrText(detail.TxID),
+		firstNonEmptyString(strings.ToUpper(strings.TrimSpace(detail.Status)), PayoutInProgress),
+		firstNonEmptyString(strings.ToLower(strings.TrimSpace(detail.Kind)), "payout"),
+		nullOrText(detail.SourceAddr),
+		nullOrText(detail.DestAddr),
+		detail.Amount,
+		nullOrText(strings.ToUpper(strings.TrimSpace(detail.Crypto))),
+		nullOrText(detail.Error),
+	)
+	return err
+}
+
+func (s *Store) SetPayoutFee(ctx context.Context, payoutID int64, fee decimal.Decimal, asset string) error {
+	if !fee.GreaterThanOrEqual(decimal.Zero) || strings.TrimSpace(asset) == "" {
 		return nil
 	}
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET fee = ?, fee_asset = ?, updated_at = %s WHERE id = ?", s.table("payout"), s.nowExpr()), fee, strings.ToUpper(strings.TrimSpace(asset)), payoutID)
 	return err
+}
+
+func (s *Store) PayoutFee(ctx context.Context, payoutID int64) (decimal.Decimal, string, error) {
+	var fee decimal.Decimal
+	var asset string
+	err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COALESCE(fee, 0), COALESCE(fee_asset, '') FROM %s WHERE id = ? LIMIT 1", s.table("payout")), payoutID).Scan(&fee, &asset)
+	return fee, asset, err
 }
 
 func (s *Store) PayoutByExternalID(ctx context.Context, crypto, externalID string) (Payout, error) {
@@ -598,14 +645,17 @@ func (s *Store) PayoutTxsByPayoutIDs(ctx context.Context, payoutIDs []int64) (ma
 	if len(payoutIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("SELECT id, payout_id, created_at, updated_at, COALESCE(txid, ''), COALESCE(status, 'IN_PROGRESS') FROM %s WHERE payout_id IN (%s) ORDER BY payout_id, id", s.table("payout_tx"), placeholders(len(payoutIDs))), int64Args(payoutIDs)...)
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id, payout_id, created_at, updated_at,
+		COALESCE(txid, ''), COALESCE(status, 'IN_PROGRESS'), COALESCE(kind, 'payout'),
+		COALESCE(source_addr, ''), COALESCE(dest_addr, ''), COALESCE(amount, 0), COALESCE(crypto, ''), COALESCE(error, '')
+		FROM %s WHERE payout_id IN (%s) ORDER BY payout_id, id`, s.table("payout_tx"), placeholders(len(payoutIDs))), int64Args(payoutIDs)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var tx PayoutTx
-		if err := rows.Scan(&tx.ID, &tx.PayoutID, &tx.CreatedAt, &tx.UpdatedAt, &tx.TxID, &tx.Status); err != nil {
+		if err := rows.Scan(&tx.ID, &tx.PayoutID, &tx.CreatedAt, &tx.UpdatedAt, &tx.TxID, &tx.Status, &tx.Kind, &tx.SourceAddr, &tx.DestAddr, &tx.Amount, &tx.Crypto, &tx.Error); err != nil {
 			return nil, err
 		}
 		out[tx.PayoutID] = append(out[tx.PayoutID], tx)

@@ -295,10 +295,6 @@ func orderJSON(record OrderRecord) map[string]any {
 	}
 	payouts := make([]map[string]any, 0, len(record.Payouts))
 	for _, payout := range record.Payouts {
-		txids := make([]string, 0, len(payout.Transactions))
-		for _, tx := range payout.Transactions {
-			txids = append(txids, tx.TxID)
-		}
 		payouts = append(payouts, map[string]any{
 			"id":           payout.ID,
 			"external_id":  nullStringValue(payout.ExternalID),
@@ -307,11 +303,32 @@ func orderJSON(record OrderRecord) map[string]any {
 			"destination":  payout.DestAddr,
 			"status":       payout.Status,
 			"task_id":      nullStringValue(payout.TaskID),
-			"txids":        txids,
+			"txids":        payoutTxIDs(payout),
+			"transactions": payoutTxDetailsJSON(payout.Transactions),
 			"callback_url": nullStringValue(payout.CallbackURL),
 			"created_at":   payout.CreatedAt.Format(time.RFC3339),
 			"updated_at":   payout.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 	return map[string]any{"external_id": record.ExternalID, "invoices": invoices, "payouts": payouts}
+}
+
+func payoutTxDetailsJSON(txs []PayoutTx) []map[string]any {
+	out := make([]map[string]any, 0, len(txs))
+	for _, tx := range txs {
+		out = append(out, map[string]any{
+			"id":          tx.ID,
+			"created_at":  tx.CreatedAt.Format(time.RFC3339),
+			"updated_at":  tx.UpdatedAt.Format(time.RFC3339),
+			"txid":        tx.TxID,
+			"status":      tx.Status,
+			"kind":        firstNonEmptyString(tx.Kind, "payout"),
+			"source":      tx.SourceAddr,
+			"destination": tx.DestAddr,
+			"amount":      tx.Amount.String(),
+			"crypto":      tx.Crypto,
+			"error":       tx.Error,
+		})
+	}
+	return out
 }

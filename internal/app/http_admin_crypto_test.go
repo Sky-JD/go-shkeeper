@@ -62,10 +62,21 @@ func TestAdminWalletsDoesNotLoadBalancesByDefault(t *testing.T) {
 	}
 	setAdminPassword(t, store, cfg, "admin-password")
 	var balanceSeen atomic.Bool
+	var spendableSeen atomic.Bool
+	var statusSeen atomic.Bool
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/BNB/status":
+			statusSeen.Store(true)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success"})
+		case "/BNB/spendable":
+			spendableSeen.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":         "success",
+				"balance":        "9",
+				"cache_ready":    true,
+				"balance_source": "evm_accounts_spendable",
+			})
 		case "/BNB/balance":
 			balanceSeen.Store(true)
 			_ = json.NewEncoder(w).Encode(map[string]any{"balance": "9"})
@@ -84,9 +95,75 @@ func TestAdminWalletsDoesNotLoadBalancesByDefault(t *testing.T) {
 	if balanceSeen.Load() {
 		t.Fatalf("admin wallet list should not load live balances by default")
 	}
+	if statusSeen.Load() {
+		t.Fatalf("admin wallet list should not load live worker status by default")
+	}
+	if !spendableSeen.Load() {
+		t.Fatalf("admin wallet list should load cached spendable balance")
+	}
 	body := res.Body.String()
-	if !strings.Contains(body, `"balance_source":"not_loaded"`) {
-		t.Fatalf("wallet list should mark balances as not loaded: %s", body)
+	for _, want := range []string{`"balance":"9"`, `"balance_source":"evm_accounts_spendable"`, `"cache_ready":true`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("wallet list missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestAdminWalletDetailUsesCachedBalanceByDefault(t *testing.T) {
+	store, cfg := testStore(t)
+	defer store.Close()
+	cfg.CryptoAllowList = []string{"BNB-USDT"}
+	ctx := t.Context()
+	if err := store.EnsureWallet(ctx, "BNB-USDT", "test-api-key"); err != nil {
+		t.Fatalf("ensure BNB-USDT wallet: %v", err)
+	}
+	setAdminPassword(t, store, cfg, "admin-password")
+	var balanceSeen atomic.Bool
+	var spendableSeen atomic.Bool
+	var statusSeen atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/BNB-USDT/status":
+			statusSeen.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success"})
+		case "/BNB-USDT/spendable":
+			spendableSeen.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":             "success",
+				"balance":            "7.61",
+				"max_single_account": "7.61",
+				"cache_ready":        true,
+				"balance_source":     "evm_accounts_spendable",
+			})
+		case "/BNB-USDT/balance":
+			balanceSeen.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]any{"balance": "7.61"})
+		default:
+			t.Fatalf("unexpected backend path: %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+	t.Setenv("BNB_API_SERVER_HOST", strings.TrimPrefix(backend.URL, "http://"))
+	handler := newTestHTTPHandler(t, store, cfg)
+
+	res := adminJSON(t, handler, http.MethodGet, "/api/v1/admin/wallets/BNB-USDT", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("wallet detail status=%d body=%s", res.Code, res.Body.String())
+	}
+	if balanceSeen.Load() {
+		t.Fatalf("admin wallet detail should not load live balances by default")
+	}
+	if statusSeen.Load() {
+		t.Fatalf("admin wallet detail should not load live worker status by default")
+	}
+	if !spendableSeen.Load() {
+		t.Fatalf("admin wallet detail should load cached spendable balance")
+	}
+	body := res.Body.String()
+	for _, want := range []string{`"balance":"7.61"`, `"max_single_account":"7.61"`, `"balance_source":"evm_accounts_spendable"`, `"cache_ready":true`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("wallet detail missing %s: %s", want, body)
+		}
 	}
 }
 
@@ -168,10 +245,25 @@ func TestAdminPayoutQuoteSkipsUnsupportedBackendFeeEstimate(t *testing.T) {
 	setAdminPassword(t, store, cfg, "admin-password")
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/BNB/balance":
-			_ = json.NewEncoder(w).Encode(map[string]any{"balance": "1"})
+		case "/BNB/spendable":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":                 "success",
+				"balance":                "1",
+				"spendable":              "0.99999",
+				"max_single_account":     "0.99999",
+				"required_native_per_tx": "0.00001",
+				"fee_asset":              "BNB",
+				"balance_source":         "evm_accounts_spendable",
+			})
 		case "/BNB/calc-tx-fee/0.001":
-			t.Fatalf("BNB quote should not call unsupported fee estimation endpoint")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":                 "success",
+				"fee":                    "0.0000021",
+				"required_native_per_tx": "0.0000021",
+				"fee_asset":              "BNB",
+				"gas_limit":              21000,
+				"estimated_gas":          true,
+			})
 		default:
 			t.Fatalf("unexpected backend path: %s", r.URL.Path)
 		}
@@ -185,13 +277,88 @@ func TestAdminPayoutQuoteSkipsUnsupportedBackendFeeEstimate(t *testing.T) {
 		t.Fatalf("quote status=%d body=%s", res.Code, res.Body.String())
 	}
 	body := res.Body.String()
-	for _, want := range []string{`"balance":"1"`, `"fee":"0"`, `"fee_asset":"BNB"`} {
+	for _, want := range []string{`"balance":"1"`, `"spendable":"0.99999"`, `"fee":"0.0000021"`, `"fee_asset":"BNB"`, `"gas_limit":21000`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("quote missing %s: %s", want, body)
 		}
 	}
 	if strings.Contains(body, "fee_error") {
 		t.Fatalf("unsupported fee estimate should not become fee_error: %s", body)
+	}
+}
+
+func TestAdminPayoutQuoteUsesSplitSpendableForEVMToken(t *testing.T) {
+	store, cfg := testStore(t)
+	defer store.Close()
+	cfg.CryptoAllowList = []string{"BNB-USDT"}
+	ctx := t.Context()
+	if err := store.EnsureWallet(ctx, "BNB-USDT", "test-api-key"); err != nil {
+		t.Fatalf("ensure wallet: %v", err)
+	}
+	setAdminPassword(t, store, cfg, "admin-password")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/BNB-USDT/spendable":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":                 "success",
+				"balance":                "2.04",
+				"spendable":              "2.04",
+				"max_single_account":     "1.02",
+				"direct_spendable":       "1.02",
+				"required_native_per_tx": "0.00001",
+				"fee_asset":              "BNB",
+				"can_split_payout":       true,
+				"auto_gas_topup":         true,
+				"gas_topup_target":       "0.000012",
+				"gas_topup_amount":       "0.000012",
+				"gas_topup_transfer_fee": "0.0000021",
+				"gas_funding_balance":    "0.001",
+				"balance_source":         "evm_accounts_spendable",
+			})
+		case "/BNB-USDT/calc-tx-fee/2.04":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":                        "success",
+				"fee":                           "0.0000034504",
+				"required_native_per_tx":        "0.0000034504",
+				"fee_asset":                     "BNB",
+				"gas_limit":                     34504,
+				"estimated_gas":                 true,
+				"gas_topup_target":              "0.0000034504",
+				"gas_topup_amount":              "0.0000034504",
+				"gas_topup_transfer_fee":        "0.0000021",
+				"gas_topup_transfer_fee_per_tx": "0.0000021",
+			})
+		default:
+			t.Fatalf("unexpected backend path: %s", r.URL.Path)
+		}
+	}))
+	defer backend.Close()
+	t.Setenv("BNB_API_SERVER_HOST", strings.TrimPrefix(backend.URL, "http://"))
+	handler := newTestHTTPHandler(t, store, cfg)
+
+	res := adminJSON(t, handler, http.MethodGet, "/api/v1/admin/payout-quote?crypto=BNB-USDT&amount=2.04", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("quote status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, want := range []string{
+		`"balance":"2.04"`,
+		`"max_single_account":"2.04"`,
+		`"single_account_max":"1.02"`,
+		`"can_split_payout":true`,
+		`"auto_gas_topup":true`,
+		`"direct_spendable":"1.02"`,
+		`"gas_topup_target":"0.0000034504"`,
+		`"gas_topup_amount":"0.0000034504"`,
+		`"gas_topup_transfer_fee":"0.0000021"`,
+		`"gas_funding_balance":"0.001"`,
+		`"fee":"0.0000034504"`,
+		`"fee_asset":"BNB"`,
+		`"gas_limit":34504`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("quote missing %s: %s", want, body)
+		}
 	}
 }
 
@@ -416,7 +583,7 @@ func TestAdminWalletDetailChecksTRONStatusBeforeBalance(t *testing.T) {
 	t.Setenv("TRON_API_SERVER_HOST", strings.TrimPrefix(backend.URL, "http://"))
 	handler := newTestHTTPHandler(t, store, cfg)
 
-	res := adminJSON(t, handler, http.MethodGet, "/api/v1/admin/wallets/USDT", nil)
+	res := adminJSON(t, handler, http.MethodGet, "/api/v1/admin/wallets/USDT?include_status=true&include_balance=true", nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("wallet detail status=%d body=%s", res.Code, res.Body.String())
 	}

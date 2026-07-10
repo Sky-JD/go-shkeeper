@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+type contextExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func (s *Store) rebuildOrderIndexIfEmpty(ctx context.Context) error {
 	var count int64
 	if err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", s.table("order_index"))).Scan(&count); err != nil {
@@ -46,6 +50,10 @@ func (s *Store) RebuildOrderIndex(ctx context.Context) error {
 }
 
 func (s *Store) refreshOrderIndexForExternalID(ctx context.Context, externalID string) error {
+	return s.refreshOrderIndexForExternalIDWith(ctx, s.db, externalID)
+}
+
+func (s *Store) refreshOrderIndexForExternalIDWith(ctx context.Context, db contextExecer, externalID string) error {
 	externalID = strings.TrimSpace(externalID)
 	if externalID == "" {
 		return nil
@@ -60,7 +68,7 @@ func (s *Store) refreshOrderIndexForExternalID(ctx context.Context, externalID s
 		ON DUPLICATE KEY UPDATE
 			sort_at = VALUES(sort_at),
 			updated_at = %s`, s.table("order_index"), s.table("invoice"), s.table("payout"), s.nowExpr())
-	_, err := s.db.ExecContext(ctx, stmt, externalID, externalID, externalID)
+	_, err := db.ExecContext(ctx, stmt, externalID, externalID, externalID)
 	return err
 }
 

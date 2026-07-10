@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -122,8 +123,11 @@ func (h *HTTPHandler) metrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) acceptsMetricsAuth(r *http.Request) bool {
-	wantUser := env("METRICS_USERNAME", "shkeeper")
-	wantPass := env("METRICS_PASSWORD", "shkeeper")
+	wantUser := strings.TrimSpace(os.Getenv("METRICS_USERNAME"))
+	wantPass := strings.TrimSpace(os.Getenv("METRICS_PASSWORD"))
+	if wantUser == "" || wantPass == "" {
+		return false
+	}
 	user, pass, ok := r.BasicAuth()
 	if !ok {
 		return false

@@ -71,8 +71,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration failed: %w\n%s", err, stmt)
 		}
 	}
+	for _, stmt := range s.columnMigrationStatements() {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaObjectError(err) {
+			return fmt.Errorf("column migration failed: %w\n%s", err, stmt)
+		}
+	}
 	for _, stmt := range s.indexStatements() {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaError(err) {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaObjectError(err) {
 			return fmt.Errorf("index migration failed: %w\n%s", err, stmt)
 		}
 	}
@@ -105,6 +110,7 @@ func (s *Store) nowExpr() string {
 
 func (s *Store) indexStatements() []string {
 	return []string{
+		"CREATE UNIQUE INDEX uq_invoice_idempotency_key ON " + s.table("invoice") + " (idempotency_key)",
 		"CREATE INDEX ix_invoice_external_id ON " + s.table("invoice") + " (external_id)",
 		"CREATE INDEX ix_invoice_status_created ON " + s.table("invoice") + " (status, created_at)",
 		"CREATE INDEX ix_invoice_order_external_updated ON " + s.table("invoice") + " (external_id, updated_at, id)",
@@ -125,6 +131,7 @@ func (s *Store) indexStatements() []string {
 		"CREATE INDEX ix_payout_order_status_updated ON " + s.table("payout") + " (status, updated_at, external_id)",
 		"CREATE INDEX ix_payout_order_crypto_updated ON " + s.table("payout") + " (crypto, updated_at, external_id)",
 		"CREATE INDEX ix_payout_crypto_amount ON " + s.table("payout") + " (crypto, amount)",
+		"CREATE INDEX ix_payout_crypto_status_created ON " + s.table("payout") + " (crypto, status, created_at)",
 		"CREATE INDEX ix_payout_status_created ON " + s.table("payout") + " (status, created_at)",
 		"CREATE INDEX ix_payout_task_status_created ON " + s.table("payout") + " (task_id, status, created_at)",
 		"CREATE UNIQUE INDEX uq_payout_tx_payout_txid ON " + s.table("payout_tx") + " (payout_id, txid)",
@@ -132,7 +139,34 @@ func (s *Store) indexStatements() []string {
 	}
 }
 
+func (s *Store) columnMigrationStatements() []string {
+	return []string{
+		"ALTER TABLE " + s.table("invoice") + " ADD COLUMN IF NOT EXISTS idempotency_key BINARY(32) DEFAULT NULL",
+		"ALTER TABLE " + s.table("payout") + " ADD COLUMN IF NOT EXISTS fee DECIMAL(38,18) DEFAULT NULL",
+		"ALTER TABLE " + s.table("payout") + " ADD COLUMN IF NOT EXISTS fee_asset VARCHAR(64) DEFAULT NULL",
+		"ALTER TABLE " + s.table("payout_tx") + " ADD COLUMN IF NOT EXISTS kind VARCHAR(32) DEFAULT 'payout'",
+		"ALTER TABLE " + s.table("payout_tx") + " ADD COLUMN IF NOT EXISTS source_addr TEXT DEFAULT NULL",
+		"ALTER TABLE " + s.table("payout_tx") + " ADD COLUMN IF NOT EXISTS dest_addr TEXT DEFAULT NULL",
+		"ALTER TABLE " + s.table("payout_tx") + " ADD COLUMN IF NOT EXISTS amount DECIMAL(38,18) DEFAULT NULL",
+		"ALTER TABLE " + s.table("payout_tx") + " ADD COLUMN IF NOT EXISTS crypto VARCHAR(64) DEFAULT NULL",
+		"ALTER TABLE " + s.table("payout_tx") + " ADD COLUMN IF NOT EXISTS error TEXT DEFAULT NULL",
+	}
+}
+
+func isDuplicateSchemaObjectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate key name") ||
+		strings.Contains(msg, "duplicate column name") ||
+		strings.Contains(msg, "already exists")
+}
+
 func isDuplicateSchemaError(err error) bool {
+	if err == nil {
+		return false
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "duplicate") ||
 		strings.Contains(msg, "already exists") ||
@@ -148,13 +182,14 @@ func mysqlSchema() []string {
 		"CREATE TABLE IF NOT EXISTS `invoice_address` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, invoice_id BIGINT NOT NULL, crypto VARCHAR(64), addr VARCHAR(512), created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY uq_invoice_address_invoice_crypto_addr (invoice_id, crypto, addr)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `transaction` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, invoice_id BIGINT NOT NULL, txid VARCHAR(255), crypto VARCHAR(64), amount_crypto DECIMAL(38,18), amount_fiat DECIMAL(38,18), need_more_confirmations BOOLEAN DEFAULT TRUE, callback_confirmed BOOLEAN DEFAULT FALSE, created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), UNIQUE KEY uq_transaction_crypto (crypto, txid, invoice_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `unconfirmed_transaction` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, invoice_id BIGINT NOT NULL, addr TEXT, txid VARCHAR(255), crypto VARCHAR(64), amount_crypto DECIMAL(38,18), callback_confirmed BOOLEAN DEFAULT FALSE, created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY uq_unconfirmed_transaction_crypto (crypto, txid, invoice_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-		"CREATE TABLE IF NOT EXISTS `payout` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), amount DECIMAL(38,18), crypto VARCHAR(64), dest_addr TEXT, success TEXT, error TEXT, callback_url TEXT, task_id VARCHAR(255), external_id VARCHAR(512), status VARCHAR(32) DEFAULT 'IN_PROGRESS') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
-		"CREATE TABLE IF NOT EXISTS `payout_tx` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, payout_id BIGINT NOT NULL, created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), txid VARCHAR(255), status VARCHAR(32) DEFAULT 'IN_PROGRESS') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+		"CREATE TABLE IF NOT EXISTS `payout` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), amount DECIMAL(38,18), crypto VARCHAR(64), dest_addr TEXT, success TEXT, error TEXT, callback_url TEXT, task_id VARCHAR(255), external_id VARCHAR(512), status VARCHAR(32) DEFAULT 'IN_PROGRESS', fee DECIMAL(38,18) DEFAULT NULL, fee_asset VARCHAR(64) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+		"CREATE TABLE IF NOT EXISTS `payout_tx` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, payout_id BIGINT NOT NULL, created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), txid VARCHAR(255), status VARCHAR(32) DEFAULT 'IN_PROGRESS', kind VARCHAR(32) DEFAULT 'payout', source_addr TEXT, dest_addr TEXT, amount DECIMAL(38,18) DEFAULT NULL, crypto VARCHAR(64) DEFAULT NULL, error TEXT DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `payout_destination` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, crypto VARCHAR(64), addr VARCHAR(512) NOT NULL, comment TEXT DEFAULT '', UNIQUE KEY uq_payout_destination_crypto (crypto, addr)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `notification` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, txid VARCHAR(255), crypto VARCHAR(64), amount_crypto DECIMAL(38,18), callback_confirmed BOOLEAN DEFAULT FALSE, type VARCHAR(64) NOT NULL, retries INT DEFAULT 0, object_id BIGINT NOT NULL, callback_url TEXT NOT NULL, message TEXT, created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY uq_notification_type (type, object_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `setting` (name VARCHAR(255) PRIMARY KEY, value TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `bitcoin_lightning_invoice` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, r_hash VARCHAR(255) UNIQUE NOT NULL, payment_request VARCHAR(512), value DECIMAL(38,18), expiry TEXT, state TEXT, creation_date TEXT, settle_date TEXT, sent_to_shkeeper BOOLEAN DEFAULT FALSE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 		"CREATE TABLE IF NOT EXISTS `order_index` (external_id VARCHAR(512) NOT NULL PRIMARY KEY, sort_at DATETIME(6) NOT NULL, updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+		"CREATE TABLE IF NOT EXISTS `scheduler_lease` (name VARCHAR(128) NOT NULL PRIMARY KEY, owner VARCHAR(255) NOT NULL, lease_until DATETIME(6) NOT NULL, updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), INDEX ix_scheduler_lease_until (lease_until)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 	}
 }
 

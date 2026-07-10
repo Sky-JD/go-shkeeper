@@ -49,9 +49,10 @@ func (h *HTTPHandler) adminRequestUser(r *http.Request) User {
 
 func (h *HTTPHandler) apiAdminWallets(w http.ResponseWriter, r *http.Request) {
 	includeBalance := boolQuery(r, "include_balance") || boolQuery(r, "live_balance")
+	includeStatus := includeBalance || boolQuery(r, "include_status") || boolQuery(r, "live_status")
 	rows := make([]map[string]any, 0, len(h.crypto.Modules()))
 	for _, module := range h.crypto.Modules() {
-		rows = append(rows, h.adminWalletJSON(r, module, false, includeBalance))
+		rows = append(rows, h.adminWalletJSON(r, module, false, includeBalance, includeStatus))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "wallets": rows})
 }
@@ -62,7 +63,9 @@ func (h *HTTPHandler) apiAdminWalletDetail(w http.ResponseWriter, r *http.Reques
 		errorJSON(w, http.StatusNotFound, err)
 		return
 	}
-	row := h.adminWalletJSON(r, module, true, true)
+	includeBalance := boolQuery(r, "include_balance") || boolQuery(r, "live_balance")
+	includeStatus := boolQuery(r, "include_status") || boolQuery(r, "live_status")
+	row := h.adminWalletJSON(r, module, true, includeBalance, includeStatus)
 	destinations, err := h.store.ListPayoutDestinations(r.Context(), module.Name)
 	if err != nil {
 		errorJSON(w, http.StatusInternalServerError, err)
@@ -77,16 +80,19 @@ func (h *HTTPHandler) apiAdminWalletDetail(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "wallet": row})
 }
 
-func (h *HTTPHandler) adminWalletJSON(r *http.Request, module *CryptoModule, includeRates bool, includeBalance bool) map[string]any {
+func (h *HTTPHandler) adminWalletJSON(r *http.Request, module *CryptoModule, includeRates bool, includeBalance bool, includeStatus bool) map[string]any {
 	ctx := r.Context()
 	wallet, walletErr := h.store.WalletByCrypto(ctx, module.Name)
-	status := h.crypto.Status(ctx, module)
+	var liveStatus any
+	if includeStatus {
+		liveStatus = h.crypto.Status(ctx, module)
+	}
 	row := map[string]any{
 		"name":           module.Name,
 		"display_name":   module.DisplayName,
 		"network":        module.Network,
 		"adapter":        module.Adapter,
-		"status":         status,
+		"status":         map[string]any{"available": false},
 		"balance":        "",
 		"balance_source": "not_loaded",
 		"balance_error":  "",
@@ -102,6 +108,19 @@ func (h *HTTPHandler) adminWalletJSON(r *http.Request, module *CryptoModule, inc
 		return row
 	}
 	row["enabled"] = wallet.Enabled
+	if includeStatus {
+		row["status"] = liveStatus
+	} else {
+		row["status"] = map[string]any{"available": wallet.Enabled}
+	}
+	if !includeBalance {
+		if wallet.Enabled {
+			h.adminWalletCachedBalance(ctx, module, row)
+		} else {
+			row["balance"] = "0"
+			row["balance_source"] = "disabled"
+		}
+	}
 	row["api_key"] = nullStringValue(wallet.APIKey)
 	row["autopayout_enabled"] = wallet.Payout
 	row["autopayout_destination"] = nullStringValue(wallet.PDest)
@@ -131,6 +150,35 @@ func (h *HTTPHandler) adminWalletJSON(r *http.Request, module *CryptoModule, inc
 		row["rates"] = rates
 	}
 	return row
+}
+
+func (h *HTTPHandler) adminWalletCachedBalance(ctx context.Context, module *CryptoModule, row map[string]any) {
+	if !supportsSpendableReport(module) {
+		return
+	}
+	spendable, err := h.crypto.Spendable(ctx, module)
+	if err != nil {
+		row["balance_error"] = err.Error()
+		return
+	}
+	for _, key := range []string{
+		"balance",
+		"spendable",
+		"max_single_account",
+		"native_balance",
+		"balance_error",
+		"cache_ready",
+		"cache_stale",
+		"cache_age_seconds",
+		"refreshed_at",
+		"refreshing",
+		"balance_source",
+	} {
+		copyMapValue(row, spendable, key)
+	}
+	if _, ok := row["balance_source"]; !ok {
+		row["balance_source"] = "wallet_cache"
+	}
 }
 
 func boolQuery(r *http.Request, key string) bool {
@@ -176,7 +224,7 @@ func (h *HTTPHandler) apiAdminPayoutQuote(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, payload)
 		return
 	}
-	if module.Network == "TRX" {
+	if supportsSpendableReport(module) {
 		spendable, err := h.crypto.Spendable(r.Context(), module)
 		if err != nil {
 			payload["balance"] = "0"
@@ -184,11 +232,28 @@ func (h *HTTPHandler) apiAdminPayoutQuote(w http.ResponseWriter, r *http.Request
 			payload["balance_error"] = err.Error()
 		} else {
 			copyMapValue(payload, spendable, "balance")
+			copyMapValue(payload, spendable, "spendable")
 			copyMapValue(payload, spendable, "max_single_account")
+			copyMapValue(payload, spendable, "direct_spendable")
+			copyMapValue(payload, spendable, "direct_max_single_account")
 			copyMapValue(payload, spendable, "account")
 			copyMapValue(payload, spendable, "account_count")
 			copyMapValue(payload, spendable, "checked")
 			copyMapValue(payload, spendable, "failed")
+			copyMapValue(payload, spendable, "funded_account_count")
+			copyMapValue(payload, spendable, "direct_funded_account_count")
+			copyMapValue(payload, spendable, "native_balance")
+			copyMapValue(payload, spendable, "required_native_per_tx")
+			copyMapValue(payload, spendable, "can_split_payout")
+			copyMapValue(payload, spendable, "auto_gas_topup")
+			copyMapValue(payload, spendable, "gas_topup_target")
+			copyMapValue(payload, spendable, "gas_topup_account_count")
+			copyMapValue(payload, spendable, "gas_topup_amount")
+			copyMapValue(payload, spendable, "gas_topup_transfer_fee")
+			copyMapValue(payload, spendable, "gas_topup_transfer_fee_per_tx")
+			copyMapValue(payload, spendable, "gas_funding_balance")
+			copyMapValue(payload, spendable, "gas_funding_account_count")
+			copyMapValue(payload, spendable, "fee_asset")
 			copyMapValue(payload, spendable, "balance_error")
 			copyMapValue(payload, spendable, "cache_ready")
 			copyMapValue(payload, spendable, "cache_stale")
@@ -198,6 +263,12 @@ func (h *HTTPHandler) apiAdminPayoutQuote(w http.ResponseWriter, r *http.Request
 			copyMapValue(payload, spendable, "balance_source")
 			if _, ok := payload["balance_source"]; !ok {
 				payload["balance_source"] = "wallet_cache"
+			}
+			if anyString(spendable["can_split_payout"]) == "true" || spendable["can_split_payout"] == true {
+				payload["single_account_max"] = spendable["max_single_account"]
+				if spendableAmount := anyString(spendable["spendable"]); spendableAmount != "" {
+					payload["max_single_account"] = spendableAmount
+				}
 			}
 		}
 	} else {
@@ -217,17 +288,76 @@ func (h *HTTPHandler) apiAdminPayoutQuote(w http.ResponseWriter, r *http.Request
 			if module.Network == "TRX" {
 				payload["fee_asset"] = "TRX"
 			}
+			copyMapValue(payload, fee, "fee_asset")
+			copyMapValue(payload, fee, "required_native_per_tx")
+			copyMapValue(payload, fee, "gas_price_wei")
+			copyMapValue(payload, fee, "gas_limit")
+			copyMapValue(payload, fee, "estimated_gas")
+			copyMapValue(payload, fee, "estimate_source")
+			copyMapValue(payload, fee, "estimate_amount")
+			copyMapValue(payload, fee, "gas_topup_target")
+			copyMapValue(payload, fee, "gas_topup_account_count")
+			copyMapValue(payload, fee, "gas_topup_amount")
+			copyMapValue(payload, fee, "gas_topup_transfer_fee")
+			copyMapValue(payload, fee, "gas_topup_transfer_fee_per_tx")
 			copyMapValue(payload, fee, "fee_sun")
 			copyMapValue(payload, fee, "fee_satoshi")
 		}
+		if nativeFee := anyString(payload["required_native_per_tx"]); nativeFee != "" && anyString(payload["fee"]) == "" {
+			payload["fee"] = nativeFee
+			if anyString(payload["fee_asset"]) == "" || payload["fee_asset"] == module.Name {
+				payload["fee_asset"] = nativeQuoteAsset(module)
+			}
+			delete(payload, "fee_error")
+		}
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+func supportsSpendableReport(module *CryptoModule) bool {
+	if module == nil || module.Adapter == "jsonrpc" {
+		return false
+	}
+	switch strings.ToUpper(module.Network) {
+	case "TRX", "ETH", "BNB", "MATIC", "AVAX", "ARBETH", "OPETH":
+		return true
+	default:
+		return false
+	}
+}
+
+func nativeQuoteAsset(module *CryptoModule) string {
+	switch strings.ToUpper(module.Network) {
+	case "TRX":
+		return "TRX"
+	case "ETH":
+		return "ETH"
+	case "BNB":
+		return "BNB"
+	case "MATIC":
+		return "MATIC"
+	case "AVAX":
+		return "AVAX"
+	case "ARBETH":
+		return "ARBETH"
+	case "OPETH":
+		return "OPETH"
+	default:
+		return module.Name
+	}
 }
 
 func copyMapValue(dst map[string]any, src map[string]any, key string) {
 	if value, ok := src[key]; ok {
 		dst[key] = value
 	}
+}
+
+func payoutFeeString(fee decimal.Decimal, asset string) string {
+	if strings.TrimSpace(asset) == "" {
+		return ""
+	}
+	return fee.String()
 }
 
 func (h *HTTPHandler) apiAdminOrders(w http.ResponseWriter, r *http.Request) {
@@ -273,6 +403,7 @@ func (h *HTTPHandler) apiAdminPayouts(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(payouts))
 	for _, payout := range payouts {
 		txids := payoutTxIDs(payout)
+		fee, feeAsset, _ := h.store.PayoutFee(r.Context(), payout.ID)
 		out = append(out, map[string]any{
 			"id":           payout.ID,
 			"created_at":   payout.CreatedAt.Format(time.RFC3339),
@@ -287,6 +418,9 @@ func (h *HTTPHandler) apiAdminPayouts(w http.ResponseWriter, r *http.Request) {
 			"external_id":  nullStringValue(payout.ExternalID),
 			"callback_url": nullStringValue(payout.CallbackURL),
 			"txids":        txids,
+			"transactions": payoutTxDetailsJSON(payout.Transactions),
+			"fee":          payoutFeeString(fee, feeAsset),
+			"fee_asset":    feeAsset,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "payouts": out})

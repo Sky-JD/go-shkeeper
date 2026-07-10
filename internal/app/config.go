@@ -20,6 +20,7 @@ type Config struct {
 	SecretKey                     []byte
 	SuggestedWalletAPIKey         string
 	RequestTimeout                time.Duration
+	PayoutRequestTimeout          time.Duration
 	NotificationTimeout           time.Duration
 	HTTPReadTimeout               time.Duration
 	HTTPWriteTimeout              time.Duration
@@ -39,6 +40,7 @@ type Config struct {
 	MinConfirmationBlockForPayout int
 	EnablePayoutCallback          bool
 	CallbackUserAgent             string
+	CookieSecure                  bool
 	LogLevel                      slog.Level
 	CryptoAllowList               []string
 	Fiats                         []string
@@ -49,6 +51,7 @@ func LoadConfig() Config {
 		ListenAddr:                    env("SHKEEPER_LISTEN", ":5000"),
 		DatabaseURL:                   firstEnv("MARIADB_DATABASE_URL", "DATABASE_URL"),
 		RequestTimeout:                secondsEnv("REQUESTS_TIMEOUT", 10),
+		PayoutRequestTimeout:          secondsEnv("PAYOUT_REQUEST_TIMEOUT", 120),
 		NotificationTimeout:           secondsEnv("REQUESTS_NOTIFICATION_TIMEOUT", 30),
 		HTTPReadTimeout:               secondsEnv("HTTP_READ_TIMEOUT", 10),
 		HTTPWriteTimeout:              secondsEnv("HTTP_WRITE_TIMEOUT", 15),
@@ -66,6 +69,7 @@ func LoadConfig() Config {
 		MinConfirmationBlockForPayout: intEnv("MIN_CONFIRMATION_BLOCK_FOR_PAYOUT", 1),
 		EnablePayoutCallback:          boolEnv("ENABLE_PAYOUT_CALLBACK", false),
 		CallbackUserAgent:             env("SHKEEPER_CALLBACK_USER_AGENT", "SHKeeper-Go-Callback/1.0"),
+		CookieSecure:                  boolEnv("SHKEEPER_COOKIE_SECURE", false),
 		SuggestedWalletAPIKey:         env("SUGGESTED_WALLET_APIKEY", randomToken(24)),
 		Fiats:                         splitCSV(env("SHKEEPER_FIATS", "USD,EUR,TRY")),
 		CryptoAllowList:               splitCSV(os.Getenv("SHKEEPER_CRYPTOS")),

@@ -97,7 +97,7 @@ func (h *HTTPHandler) twoFactorSetupPost(w http.ResponseWriter, r *http.Request)
 		http.Redirect(w, r, "/2fa/setup?err="+url.QueryEscape(err.Error()), http.StatusFound)
 		return
 	}
-	clearSetup2FACookie(w)
+	clearSetup2FACookie(w, h.cfg.CookieSecure)
 	page(w, "备用码", backupCodesHTML("二次验证已启用", codes))
 }
 
@@ -202,6 +202,7 @@ func (h *HTTPHandler) setup2FASecret(w http.ResponseWriter, r *http.Request) str
 		Value:    payload + ":" + sig,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   h.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(exp, 0),
 	})
@@ -228,8 +229,8 @@ func (h *HTTPHandler) readSetup2FASecret(r *http.Request) (string, bool) {
 	return parts[0], true
 }
 
-func clearSetup2FACookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: setup2FACookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: time.Unix(0, 0), MaxAge: -1})
+func clearSetup2FACookie(w http.ResponseWriter, secure bool) {
+	http.SetCookie(w, &http.Cookie{Name: setup2FACookieName, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, Expires: time.Unix(0, 0), MaxAge: -1})
 }
 
 func backupCodesHTML(title string, codes []string) string {

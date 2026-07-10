@@ -79,6 +79,14 @@ jobs:
           GO_SHKEEPER_TEST_DATABASE_URL: mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test
         run: go test -p 1 ./...
 
+      - name: Vet
+        run: go vet ./...
+
+      - name: Race test payment and worker paths
+        env:
+          GO_SHKEEPER_TEST_DATABASE_URL: mariadb://shkeeper:shkeeper@127.0.0.1:3306/go_shkeeper_test
+        run: go test -race -p 1 ./internal/app ./internal/chainworker
+
       - name: Verify redacted final plan
         run: |
           tmp="$(mktemp -d)"

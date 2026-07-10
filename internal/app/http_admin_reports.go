@@ -211,6 +211,9 @@ func payoutRowsHTML(payouts []Payout) string {
 func payoutTxIDs(payout Payout) []string {
 	out := make([]string, 0, len(payout.Transactions))
 	for _, tx := range payout.Transactions {
+		if strings.EqualFold(tx.Kind, "gas_topup") || strings.TrimSpace(tx.TxID) == "" {
+			continue
+		}
 		out = append(out, tx.TxID)
 	}
 	return out

@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -74,13 +76,6 @@ func (h *HTTPHandler) recordConfirmedTransaction(r *http.Request, module *Crypto
 	if externalID != "" && invoice.ExternalID != externalID {
 		return Transaction{}, Invoice{}, false, errors.New("external_id does not match invoice address")
 	}
-	existing, err := h.store.ExistingTransaction(ctx, module.Name, txid, invoice.ID)
-	if err == nil {
-		return existing, invoice, true, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Transaction{}, Invoice{}, false, err
-	}
 	wallet, err := h.store.WalletByCrypto(ctx, invoice.Crypto)
 	if err != nil {
 		return Transaction{}, Invoice{}, false, err
@@ -107,28 +102,11 @@ func (h *HTTPHandler) recordConfirmedTransaction(r *http.Request, module *Crypto
 		CallbackConfirmed:     false,
 		Addr:                  addr,
 	}
-	if err := h.store.AddTransaction(ctx, &tx); err != nil {
-		if isDuplicateSchemaError(err) || strings.Contains(strings.ToLower(err.Error()), "unique") {
-			existing, err := h.store.ExistingTransaction(ctx, module.Name, txid, invoice.ID)
-			return existing, invoice, true, err
-		}
+	invoice, duplicate, err := h.store.ApplyConfirmedTransaction(ctx, &tx, wallet.LLimit, wallet.ULimit)
+	if err != nil {
 		return Transaction{}, Invoice{}, false, err
 	}
-	newFiat := invoice.BalanceFiat.Add(amountFiat)
-	newCrypto := invoice.BalanceCrypto
-	if module.Name == invoice.Crypto {
-		newCrypto = newCrypto.Add(amount)
-	}
-	status := invoiceStatus(newFiat, invoice.AmountFiat, wallet.LLimit, wallet.ULimit)
-	if err := h.store.UpdateInvoiceBalance(ctx, invoice.ID, newFiat, newCrypto, status); err != nil {
-		return Transaction{}, Invoice{}, false, err
-	}
-	_ = h.store.DeleteUnconfirmed(ctx, module.Name, txid)
-	invoice.BalanceFiat = newFiat
-	invoice.BalanceCrypto = newCrypto
-	invoice.Status = status
-	tx.Invoice = &invoice
-	return tx, invoice, false, nil
+	return tx, invoice, duplicate, nil
 }
 
 func invoiceStatus(balanceFiat, amountFiat, llimit, ulimit decimal.Decimal) string {
@@ -260,13 +238,29 @@ func (h *HTTPHandler) apiPayout(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusBadGateway, err)
 		return
 	}
-	txids := txIDsFromAny(res["result"])
-	if len(txids) == 0 {
-		txids = txIDsFromAny(res)
+	result := res["result"]
+	if result == nil {
+		result = res
 	}
-	if err := h.store.SetPayoutTaskAndTxIDs(r.Context(), payout.ID, anyString(res["task_id"]), txids); err != nil {
+	details := payoutTxDetailsFromAny(result, module.Name, prepared.Destination)
+	if len(details) == 0 {
+		details = payoutTxDetailsFromTxIDs(txIDsFromAny(result), module.Name, prepared.Destination)
+	}
+	if err := h.store.SetPayoutTaskAndTxDetails(r.Context(), payout.ID, anyString(res["task_id"]), details); err != nil {
 		errorJSON(w, http.StatusInternalServerError, err)
 		return
+	}
+	if fee, asset, ok := payoutFeeFromResult(res); ok {
+		_ = h.store.SetPayoutFee(r.Context(), payout.ID, fee, asset)
+	}
+	switch strings.ToUpper(strings.TrimSpace(anyString(res["status"]))) {
+	case PayoutFail, "FAILED", "FAILURE", "ERROR":
+		message := payoutResultErrorText(res)
+		_ = h.store.MarkPayoutFail(r.Context(), payout.ID, message)
+		writeJSON(w, http.StatusBadGateway, map[string]any{"status": "error", "message": message, "payout_status": PayoutFail, "result": result, "task_id": anyString(res["task_id"])})
+		return
+	case PayoutPartial:
+		_ = h.store.MarkPayoutPartial(r.Context(), payout.ID, payoutResultErrorText(res))
 	}
 	if prepared.ExternalID != "" {
 		res["external_id"] = prepared.ExternalID
@@ -445,6 +439,18 @@ func validateCallbackURL(value string) error {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("Invalid callback_url scheme: %s", value)
 	}
+	if parsed.User != nil {
+		return fmt.Errorf("Invalid callback_url userinfo: %s", value)
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return fmt.Errorf("Invalid callback_url private host: %s", value)
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() {
+			return fmt.Errorf("Invalid callback_url private address: %s", value)
+		}
+	}
 	return nil
 }
 
@@ -490,6 +496,7 @@ func (h *HTTPHandler) apiPayoutStatus(w http.ResponseWriter, r *http.Request) {
 	if len(payout.Transactions) > 0 {
 		txid = payout.Transactions[0].TxID
 	}
+	fee, feeAsset, _ := h.store.PayoutFee(r.Context(), payout.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":          payout.ID,
 		"external_id": externalID,
@@ -498,6 +505,8 @@ func (h *HTTPHandler) apiPayoutStatus(w http.ResponseWriter, r *http.Request) {
 		"amount":      payout.Amount.String(),
 		"destination": payout.DestAddr,
 		"txid":        txid,
+		"fee":         payoutFeeString(fee, feeAsset),
+		"fee_asset":   feeAsset,
 	})
 }
 
@@ -530,9 +539,9 @@ func (h *HTTPHandler) validBackendKey(r *http.Request, module *CryptoModule) boo
 		specific = os.Getenv("SHKEEPER_BTC_BACKEND_KEY")
 	}
 	if specific == "" {
-		specific = "shkeeper"
+		return false
 	}
-	return key == specific
+	return subtle.ConstantTimeCompare([]byte(key), []byte(specific)) == 1
 }
 
 func anyString(v any) string {
@@ -589,6 +598,202 @@ func txIDsFromAny(v any) []string {
 		return nil
 	}
 	return nil
+}
+
+func payoutTxDetailsFromAny(v any, defaultCrypto string, defaultDestination string) []PayoutTx {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []any:
+		out := make([]PayoutTx, 0)
+		for _, item := range x {
+			out = append(out, payoutTxDetailsFromAny(item, defaultCrypto, defaultDestination)...)
+		}
+		return out
+	case map[string]any:
+		if details, ok := x["details"]; ok {
+			parsed := payoutTxDetailList(details, defaultCrypto, defaultDestination)
+			if len(parsed) > 0 {
+				return parsed
+			}
+		}
+		if result, ok := x["result"]; ok {
+			parsed := payoutTxDetailsFromAny(result, defaultCrypto, defaultDestination)
+			if len(parsed) > 0 {
+				return parsed
+			}
+		}
+		if results, ok := x["results"]; ok {
+			return payoutTxDetailsFromAny(results, defaultCrypto, defaultDestination)
+		}
+		destination := strings.TrimSpace(anyString(firstAny(x, "dest", "destination", "dest_addr")))
+		if destination == "" {
+			destination = defaultDestination
+		}
+		crypto := strings.TrimSpace(anyString(firstAny(x, "crypto")))
+		if crypto == "" {
+			crypto = defaultCrypto
+		}
+		txids := txIDsFromAny(x["txids"])
+		if len(txids) == 0 {
+			txids = txIDsFromAny(x["txid"])
+		}
+		sources := stringSliceFromAny(x["sources"])
+		amounts := anySliceFromAny(x["amounts"])
+		out := make([]PayoutTx, 0, len(txids))
+		for i, txid := range txids {
+			detail := PayoutTx{TxID: txid, Status: PayoutInProgress, Kind: "payout", DestAddr: destination, Crypto: crypto}
+			if i < len(sources) {
+				detail.SourceAddr = sources[i]
+			}
+			if i < len(amounts) {
+				if amount, ok := decimalFromAny(amounts[i]); ok {
+					detail.Amount = amount
+				}
+			}
+			out = append(out, detail)
+		}
+		return out
+	case string:
+		return payoutTxDetailsFromTxIDs(txIDsFromAny(x), defaultCrypto, defaultDestination)
+	default:
+		return nil
+	}
+}
+
+func payoutTxDetailList(v any, defaultCrypto string, defaultDestination string) []PayoutTx {
+	items := anySliceFromAny(v)
+	out := make([]PayoutTx, 0, len(items))
+	for _, item := range items {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		crypto := strings.TrimSpace(anyString(firstAny(row, "crypto")))
+		if crypto == "" {
+			crypto = defaultCrypto
+		}
+		destination := strings.TrimSpace(anyString(firstAny(row, "destination", "dest", "dest_addr")))
+		if destination == "" {
+			destination = defaultDestination
+		}
+		status := strings.TrimSpace(anyString(firstAny(row, "status")))
+		if status == "" {
+			status = PayoutInProgress
+		}
+		kind := strings.TrimSpace(anyString(firstAny(row, "kind", "type")))
+		if kind == "" {
+			kind = "payout"
+		}
+		var amount decimal.Decimal
+		if parsed, ok := decimalFromAny(firstAny(row, "amount")); ok {
+			amount = parsed
+		}
+		detail := PayoutTx{
+			TxID:       strings.TrimSpace(anyString(firstAny(row, "txid", "tx_id"))),
+			Status:     status,
+			Kind:       kind,
+			SourceAddr: strings.TrimSpace(anyString(firstAny(row, "source", "source_addr", "from"))),
+			DestAddr:   destination,
+			Amount:     amount,
+			Crypto:     crypto,
+			Error:      strings.TrimSpace(anyString(firstAny(row, "error", "message"))),
+		}
+		if detail.TxID == "" && detail.Error == "" {
+			continue
+		}
+		out = append(out, detail)
+	}
+	return out
+}
+
+func payoutTxDetailsFromTxIDs(txids []string, crypto string, destination string) []PayoutTx {
+	out := make([]PayoutTx, 0, len(txids))
+	for _, txid := range uniqueNonEmptyStrings(txids) {
+		out = append(out, PayoutTx{TxID: txid, Status: PayoutInProgress, Kind: "payout", Crypto: crypto, DestAddr: destination})
+	}
+	return out
+}
+
+func stringSliceFromAny(v any) []string {
+	items := anySliceFromAny(v)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, strings.TrimSpace(anyString(item)))
+	}
+	return out
+}
+
+func anySliceFromAny(v any) []any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []any:
+		return x
+	case []string:
+		out := make([]any, 0, len(x))
+		for _, item := range x {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return []any{x}
+	}
+}
+
+func payoutResultErrorText(res map[string]any) string {
+	for _, candidate := range []any{res["message"], res["error"]} {
+		if text := strings.TrimSpace(anyString(candidate)); text != "" {
+			return text
+		}
+	}
+	if result, ok := res["result"].(map[string]any); ok {
+		if text := strings.TrimSpace(anyString(firstAny(result, "error", "message"))); text != "" {
+			return text
+		}
+	}
+	return "payout failed"
+}
+
+func payoutFeeFromResult(res map[string]any) (decimal.Decimal, string, bool) {
+	return payoutFeeFromAny(res)
+}
+
+func payoutFeeFromAny(v any) (decimal.Decimal, string, bool) {
+	switch x := v.(type) {
+	case map[string]any:
+		fee, ok := decimalFromAny(firstAny(x, "actual_fee", "network_fee"))
+		if ok && fee.GreaterThanOrEqual(decimal.Zero) {
+			asset := strings.TrimSpace(anyString(firstAny(x, "fee_asset", "network_fee_asset")))
+			if asset != "" {
+				return fee, asset, true
+			}
+		}
+		if result, ok := x["result"]; ok {
+			if fee, asset, ok := payoutFeeFromAny(result); ok {
+				return fee, asset, true
+			}
+		}
+	case []any:
+		total := decimal.Zero
+		asset := ""
+		for _, item := range x {
+			itemFee, itemAsset, ok := payoutFeeFromAny(item)
+			if !ok {
+				continue
+			}
+			if asset == "" {
+				asset = itemAsset
+			}
+			if strings.EqualFold(asset, itemAsset) {
+				total = total.Add(itemFee)
+			}
+		}
+		if asset != "" {
+			return total, asset, true
+		}
+	}
+	return decimal.Zero, "", false
 }
 
 func payoutTxIDsByDestination(v any) map[string][][]string {

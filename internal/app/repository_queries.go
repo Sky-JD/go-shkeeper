@@ -778,6 +778,14 @@ func (s *Store) CompletePayoutSuccess(ctx context.Context, payout Payout, txid s
 }
 
 func (s *Store) SetPayoutTaskAndTxIDs(ctx context.Context, payoutID int64, taskID string, txids []string) error {
+	details := make([]PayoutTx, 0, len(txids))
+	for _, txid := range uniqueNonEmptyStrings(txids) {
+		details = append(details, PayoutTx{TxID: txid, Status: PayoutInProgress, Kind: "payout"})
+	}
+	return s.SetPayoutTaskAndTxDetails(ctx, payoutID, taskID, details)
+}
+
+func (s *Store) SetPayoutTaskAndTxDetails(ctx context.Context, payoutID int64, taskID string, details []PayoutTx) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -788,8 +796,29 @@ func (s *Store) SetPayoutTaskAndTxIDs(ctx context.Context, payoutID int64, taskI
 			return err
 		}
 	}
-	for _, txid := range uniqueNonEmptyStrings(txids) {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (payout_id, txid, status) VALUES (?, ?, ?)", s.table("payout_tx")), payoutID, txid, PayoutInProgress); err != nil && !isDuplicateSchemaError(err) && !strings.Contains(strings.ToLower(err.Error()), "unique") {
+	for _, detail := range normalizePayoutTxDetails(details) {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s
+			(payout_id, txid, status, kind, source_addr, dest_addr, amount, crypto, error)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE
+				status = VALUES(status),
+				kind = VALUES(kind),
+				source_addr = VALUES(source_addr),
+				dest_addr = VALUES(dest_addr),
+				amount = VALUES(amount),
+				crypto = VALUES(crypto),
+				error = VALUES(error),
+				updated_at = %s`, s.table("payout_tx"), s.nowExpr()),
+			payoutID,
+			nullOrText(detail.TxID),
+			detail.Status,
+			detail.Kind,
+			nullOrText(detail.SourceAddr),
+			nullOrText(detail.DestAddr),
+			detail.Amount,
+			nullOrText(detail.Crypto),
+			nullOrText(detail.Error),
+		); err != nil && !isDuplicateSchemaError(err) && !strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return err
 		}
 	}
@@ -797,6 +826,35 @@ func (s *Store) SetPayoutTaskAndTxIDs(ctx context.Context, payoutID int64, taskI
 		return err
 	}
 	return s.refreshOrderIndexForPayoutID(ctx, payoutID)
+}
+
+func (s *Store) MarkPayoutPartial(ctx context.Context, id int64, message string) error {
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET status = ?, success = 'Partial', error = ?, updated_at = %s WHERE id = ?", s.table("payout"), s.nowExpr()), PayoutPartial, strings.TrimSpace(message), id)
+	if err != nil {
+		return err
+	}
+	return s.refreshOrderIndexForPayoutID(ctx, id)
+}
+
+func normalizePayoutTxDetails(details []PayoutTx) []PayoutTx {
+	out := make([]PayoutTx, 0, len(details))
+	for _, detail := range details {
+		detail.TxID = strings.TrimSpace(detail.TxID)
+		detail.Status = strings.ToUpper(strings.TrimSpace(detail.Status))
+		if detail.Status == "" {
+			detail.Status = PayoutInProgress
+		}
+		detail.Kind = strings.ToLower(strings.TrimSpace(detail.Kind))
+		if detail.Kind == "" {
+			detail.Kind = "payout"
+		}
+		detail.Crypto = strings.ToUpper(strings.TrimSpace(detail.Crypto))
+		if detail.TxID == "" && strings.TrimSpace(detail.Error) == "" {
+			continue
+		}
+		out = append(out, detail)
+	}
+	return out
 }
 
 func (s *Store) PendingPayouts(ctx context.Context) ([]Payout, error) {

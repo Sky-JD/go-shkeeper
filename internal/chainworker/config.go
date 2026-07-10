@@ -36,6 +36,7 @@ type Config struct {
 	DBConnMaxLifetime            time.Duration
 	DepositScanEnabled           bool
 	DepositScanInterval          time.Duration
+	DepositScanReconcileInterval time.Duration
 	DepositScanMaxInvoiceAge     time.Duration
 	DepositScanBatchSize         int
 	DepositScanBlockStep         int64
@@ -75,6 +76,7 @@ func LoadConfig() Config {
 		DBConnMaxLifetime:            secondsEnv("DB_CONN_MAX_LIFETIME_SECONDS", 1800),
 		DepositScanEnabled:           boolEnv("EVM_DEPOSIT_SCAN_ENABLED", true),
 		DepositScanInterval:          secondsEnv("EVM_DEPOSIT_SCAN_INTERVAL_SECONDS", 20),
+		DepositScanReconcileInterval: secondsEnv("EVM_DEPOSIT_RECONCILE_INTERVAL_SECONDS", 600),
 		DepositScanMaxInvoiceAge:     secondsEnv("EVM_DEPOSIT_SCAN_MAX_INVOICE_AGE_SECONDS", 7200),
 		DepositScanBatchSize:         intEnv("EVM_DEPOSIT_SCAN_BATCH_SIZE", 200000),
 		DepositScanBlockStep:         int64Env("EVM_DEPOSIT_SCAN_BLOCK_STEP", 500),
@@ -214,7 +216,7 @@ func defaultFullnode(module string) string {
 	case "OPETH":
 		return "https://optimism-rpc.publicnode.com"
 	default:
-		return "https://bsc-rpc.publicnode.com"
+		return "https://bsc.rpc.blxrbdn.com"
 	}
 }
 
@@ -333,7 +335,7 @@ func defaultEVMAverageBlockSeconds(module string) int64 {
 	case "ETH":
 		return 12
 	case "BNB":
-		return 3
+		return 1
 	case "MATIC", "AVAX", "ARBETH", "OPETH":
 		return 2
 	default:

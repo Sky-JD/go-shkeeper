@@ -41,39 +41,36 @@ git clone https://github.com/Sky-JD/go-shkeeper.git
 cd go-shkeeper
 ```
 
-### 3. Create A Local `.env`
+### 3. Bootstrap With The Install Script
 
-Use strong values for real deployments. The example below is only for a local first run.
+Recommended for the first run:
 
 ```bash
-cat > .env <<'EOF'
-MARIADB_ROOT_PASSWORD=change-root-password
-MARIADB_PASSWORD=change-db-password
-SECRET_KEY=change-cookie-secret
-SHKEEPER_HOST=127.0.0.1
-SHKEEPER_PORT=5000
-SHKEEPER_CRYPTOS=USDT
-EOF
+bash deploy/install.sh
 ```
 
-PowerShell equivalent:
+The installer will:
 
-```powershell
-@'
-MARIADB_ROOT_PASSWORD=change-root-password
-MARIADB_PASSWORD=change-db-password
-SECRET_KEY=change-cookie-secret
-SHKEEPER_HOST=127.0.0.1
-SHKEEPER_PORT=5000
-SHKEEPER_CRYPTOS=USDT
-'@ | Set-Content .env -Encoding UTF8
+- create `.env` if it does not exist
+- detect missing or placeholder values such as `change-root-password`
+- prompt you to confirm or replace `MARIADB_ROOT_PASSWORD`, `MARIADB_PASSWORD`, `SECRET_KEY`, host, port, and enabled cryptos in an interactive terminal
+- build and start the stack
+
+Direct entrypoint:
+
+```bash
+bash deploy/shkeeperctl.sh install
 ```
 
-### 4. Build And Start
+If you still want to use the manual quickstart flow, create `.env` yourself and then run:
 
 ```bash
 docker compose --env-file .env -f docker-compose.quickstart.yml up --build -d
 ```
+
+### 4. Build And Start
+
+The install script above already builds and starts the stack. The manual command is shown in step 3 for users who do not want the interactive installer.
 
 The Docker build compiles the Vue admin UI first, embeds it into the Go service, then starts the service at `http://127.0.0.1:5000`.
 
@@ -180,6 +177,9 @@ Important environment variables:
 
 - `MARIADB_DATABASE_URL` or `DATABASE_URL`: MariaDB/MySQL DSN, for example `mariadb://user:pass@host:3306/shkeeper`.
 - `SECRET_KEY`: cookie signing secret.
+- `SHKEEPER_BACKEND_KEY`: shared secret used by chain workers when notifying the main service; the runtime rejects notifications when it is unset.
+- `METRICS_USERNAME` and `METRICS_PASSWORD`: required credentials for the main `/metrics` endpoint.
+- `SHKEEPER_COOKIE_SECURE`: sets the `Secure` flag on admin and 2FA cookies; enable it behind production HTTPS.
 - `SHKEEPER_LISTEN`: listen address, default `:5000`.
 - `SHKEEPER_CRYPTOS`: comma-separated enabled crypto list, for example `BTC,TRX,USDT`.
 - `SCHEDULER_ENABLED`: enables background payout and notification tasks. The quickstart compose disables it by default.
